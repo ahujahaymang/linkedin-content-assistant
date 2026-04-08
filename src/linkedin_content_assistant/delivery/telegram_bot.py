@@ -135,21 +135,34 @@ class TelegramBot:
             raise RuntimeError("Telegram bot not connected")
         
         try:
-            # Format the message
-            message_text = self._format_post_message(post, profile_id)
+            # Format the post content message (copyable)
+            post_message = self._format_post_content(post)
             
-            # Send with retry logic
-            success = await self._send_message_with_retry(
+            # Format the metadata message (separate)
+            metadata_message = self._format_metadata(post, profile_id)
+            
+            # Send post content first
+            success1 = await self._send_message_with_retry(
                 self.config.chat_id,
-                message_text
+                post_message
             )
             
-            if success:
+            if not success1:
+                self.logger.error(f"Failed to send post content for profile {profile_id}")
+                return False
+            
+            # Send metadata second
+            success2 = await self._send_message_with_retry(
+                self.config.chat_id,
+                metadata_message
+            )
+            
+            if success2:
                 self.logger.info(f"Sent post draft for profile {profile_id}")
             else:
-                self.logger.error(f"Failed to send post draft for profile {profile_id}")
+                self.logger.warning(f"Post sent but metadata failed for profile {profile_id}")
             
-            return success
+            return success1 and success2
             
         except Exception as e:
             self.logger.error(f"Error sending post draft: {e}")
@@ -200,33 +213,43 @@ class TelegramBot:
             self.logger.error(f"Error handling Telegram feedback: {e}")
             return None
     
-    def _format_post_message(self, post: LinkedInPost, profile_id: str) -> str:
+    def _format_post_content(self, post: LinkedInPost) -> str:
         """
-        Format post draft as Telegram message.
+        Format post content for copy-paste to LinkedIn.
         
         Args:
             post: LinkedIn post to format
+            
+        Returns:
+            Formatted post content (copyable)
+        """
+        # Post content (check if hashtags are already included)
+        content = post.content.strip()
+        
+        # Check if content already ends with hashtags
+        has_hashtags_in_content = any(tag in content for tag in post.hashtags) if post.hashtags else False
+        
+        message = f"{content}\n\n"
+        
+        # Only add hashtags if they're not already in the content
+        if post.hashtags and not has_hashtags_in_content:
+            hashtags_str = ' '.join(post.hashtags)
+            message += f"{hashtags_str}"
+        
+        return message.strip()
+    
+    def _format_metadata(self, post: LinkedInPost, profile_id: str) -> str:
+        """
+        Format metadata and instructions (separate message).
+        
+        Args:
+            post: LinkedIn post
             profile_id: Profile ID
             
         Returns:
-            Formatted message text
+            Formatted metadata message
         """
-        # Build message with HTML formatting
-        message = "📝 <b>Daily LinkedIn Post Draft</b>\n\n"
-        message += "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
-        
-        # Post content (ready to copy-paste)
-        message += f"{post.content}\n\n"
-        
-        # Hashtags
-        if post.hashtags:
-            hashtags_str = ' '.join(post.hashtags)
-            message += f"{hashtags_str}\n\n"
-        
-        message += "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
-        
-        # Metadata section (separate from copyable content)
-        message += "📊 <b>Metadata:</b>\n"
+        message = "📊 <b>Post Metadata</b>\n\n"
         
         # Extract tone from tone_analysis if available
         tone = post.tone_analysis.get("formality", "professional") if post.tone_analysis else "professional"
@@ -244,8 +267,7 @@ class TelegramBot:
         
         # Instructions section
         message += "\n💡 <b>Actions:</b>\n"
-        message += "• Copy content between lines above\n"
-        message += "• Reply /posted after posting\n"
+        message += "• Reply /posted after posting to LinkedIn\n"
         message += "• Reply /skip to skip this draft"
         
         return message
