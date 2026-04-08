@@ -1,0 +1,95 @@
+# LinkedIn Content Assistant Configuration Example
+# Copy this file to config.yaml and customize for your needs
+#
+# Environment Variable Substitution:
+# Use ${VAR_NAME} syntax to substitute environment variables
+# Example: bot_token: "${TELEGRAM_BOT_TOKEN}"
+
+system:
+  environment: "production"   # development, staging, production
+  log_level: "INFO"           # DEBUG, INFO, WARNING, ERROR, CRITICAL
+  data_dir: "./data"
+
+profiles:
+  directory: "./profiles"
+  auto_load: true             # Automatically load all profiles on startup
+
+memory:
+  storage_type: "json"        # json, sqlite, postgresql
+  directory: "./data/memory"
+  retention_days: 90          # Keep post history for 90 days
+  backup_enabled: false
+  backup_interval_hours: 24
+
+scheduler:
+  enabled: true
+  check_interval: 60          # Check for scheduled tasks every 60 seconds
+  max_concurrent_jobs: 1      # Only one generation job at a time
+
+llm:
+  primary_provider: "bedrock_claude"
+  primary_model: "anthropic.claude-3-sonnet-20240229-v1:0"
+  fallback_enabled: true
+  fallback_providers:
+    - provider: "openai"
+      model: "gpt-4-turbo-preview"
+    - provider: "anthropic"
+      model: "claude-3-sonnet-20240229"
+  temperature: 0.75           # Creative temperature for content generation (0.7-0.8 recommended)
+  max_tokens: 2000
+  timeout: 60                 # Request timeout in seconds
+
+telegram:
+  enabled: true
+  bot_token: "${TELEGRAM_BOT_TOKEN}"  # Set TELEGRAM_BOT_TOKEN environment variable
+  chat_id: "${TELEGRAM_CHAT_ID}"      # Set TELEGRAM_CHAT_ID environment variable
+  parse_mode: "HTML"          # HTML or Markdown
+  retry_attempts: 3
+  retry_delay: 5              # Initial retry delay in seconds (exponential backoff)
+
+feed_scanner:
+  enabled: true
+  max_posts_per_session: 50   # Maximum posts to scan per session (1-100)
+  delay_between_reads: 3      # Seconds between reading posts (human-like behavior)
+  scan_interval_hours: 6      # How often to scan the feed
+  rate_limit_pause: 3600      # Pause for 1 hour if rate limited (minimum 3600)
+
+web_scraper:
+  enabled: true
+  sources:
+    - "https://news.ycombinator.com"
+    - "https://techcrunch.com"
+  request_timeout: 30         # Request timeout in seconds
+  rate_limit_delay: 5         # Minimum delay between requests in seconds
+  respect_robots_txt: true
+  max_retries: 3
+  user_agent: "Mozilla/5.0 (compatible; LinkedInContentAssistant/0.1)"
+
+trend_monitor:
+  enabled: true
+  aggregation_window_hours: 24
+  min_frequency: 2            # Minimum occurrences to be considered trending
+  max_trends: 10              # Maximum trends to track
+
+safety:
+  max_posts_per_day: 1        # Hard limit: one post per day per profile
+  require_manual_posting: true  # MUST be true - no automation allowed
+  store_linkedin_credentials: false  # MUST be false - no credential storage
+  enable_rate_limiting: true
+  exponential_backoff_base: 2
+  max_backoff_seconds: 300
+
+monitoring:
+  health_check_enabled: true
+  health_check_interval: 300  # Check health every 5 minutes
+  metrics_enabled: true
+  alert_on_critical_errors: true
+  daily_summary_enabled: true
+  daily_summary_time: "23:59" # Time to generate daily summary (HH:MM 24-hour format)
+
+logging:
+  log_file: "./logs/linkedin_content_assistant.log"
+  max_file_size_mb: 100
+  backup_count: 5
+  format: "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+  include_stack_traces: true

@@ -1,0 +1,77 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Virtual Environment
+venv/
+env/
+ENV/
+.venv
+
+# Environment Variables
+.env
+.env.local
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Testing
+.pytest_cache/
+.coverage
+htmlcov/
+.hypothesis/
+
+# Logs
+*.log
+logs/
+
+# Data (keep structure, ignore content)
+data/memory/*.json
+data/memory/*.db
+!data/memory/.gitkeep
+
+# Profiles (keep examples, ignore personal)
+profiles/*.yaml
+!profiles/example-*.yaml
+!profiles/.gitkeep
+
+# Config (keep examples, ignore personal)
+config/*.yaml
+!config/config.yaml.example
+!config/.gitkeep
+
+# Temporary files
+*.tmp
+*.bak
+.cache/
+
+# mypy
+.mypy_cache/
+.dmypy.json
+dmypy.json
+
+# Ruff
+.ruff_cache/

@@ -1,0 +1,52 @@
+# Example Profile: Senior Software Engineer
+# This profile demonstrates a technical-focused senior engineer persona
+# with emphasis on hands-on engineering topics and practical insights
+
+profile_id: "example-senior-engineer"
+name: "Senior Software Engineer Profile"
+description: "Technical-focused profile for senior engineers sharing practical insights on cloud architecture, system design, and engineering best practices"
+version: 1
+enabled: true
+created_at: "2024-01-15T10:00:00"
+last_updated: "2024-01-15T10:00:00"
+
+identity:
+  headline: "Senior Software Engineer | Cloud Architecture | Distributed Systems"
+  seniority: "senior"
+  primary_domains:
+    - "Cloud Computing"
+    - "Distributed Systems"
+    - "Software Architecture"
+    - "DevOps & Infrastructure"
+  target_audience: "Software engineers, architects, and technical leads interested in scalable systems and cloud technologies"
+  positioning: "Sharing practical lessons from building and scaling distributed systems in production"
+  excluded_topics:
+    - "Politics"
+    - "Religion"
+    - "Controversial social issues"
+    - "Personal life details"
+
+behavior:
+  active_topics:
+    - "AWS architecture patterns"
+    - "Microservices design"
+    - "Database optimization"
+    - "CI/CD best practices"
+    - "System reliability"
+    - "Performance tuning"
+    - "Infrastructure as Code"
+  hook_patterns:
+    - "Personal debugging story"
+    - "Production incident lesson"
+    - "Contrarian technical take"
+    - "Before/after comparison"
+    - "Common mistake to avoid"
+  posting_windows:
+    - start_hour: 9
+      end_hour: 11
+    - start_hour: 14
+      end_hour: 16
+  emoji_frequency: "low"
+  comment_depth: "detailed"
+  vocabulary_bias: "technical"
+  engagement_style: "thoughtful"
