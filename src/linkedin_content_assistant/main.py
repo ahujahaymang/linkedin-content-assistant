@@ -80,7 +80,7 @@ def setup_logging(config: AppConfig) -> None:
     logger.info("=" * 80)
 
 
-def initialize_components(config: AppConfig) -> tuple:
+async def initialize_components(config: AppConfig) -> tuple:
     """Initialize all application components.
     
     Args:
@@ -135,6 +135,27 @@ def initialize_components(config: AppConfig) -> tuple:
         drafting_agent = DraftingAgent(llm_factory)
         logger.info("Content Agents initialized")
         
+        # Initialize Telegram Bot (if enabled)
+        telegram_bot = None
+        try:
+            logger.info(f"Checking Telegram configuration: enabled={config.telegram.enabled}")
+            if config.telegram.enabled:
+                logger.info("Initializing Telegram Bot...")
+                from linkedin_content_assistant.delivery.telegram_bot import TelegramBot
+                telegram_bot = TelegramBot(config.telegram)
+                # Connect to Telegram
+                try:
+                    await telegram_bot.connect()
+                    logger.info("Telegram Bot connected successfully")
+                except Exception as e:
+                    logger.warning(f"Failed to connect Telegram Bot: {e}", exc_info=True)
+                    telegram_bot = None
+            else:
+                logger.info("Telegram delivery disabled in configuration")
+        except Exception as e:
+            logger.error(f"Error during Telegram bot initialization: {e}", exc_info=True)
+            telegram_bot = None
+        
         # Initialize ContentOrchestrator
         logger.info("Initializing ContentOrchestrator...")
         orchestrator = ContentOrchestrator(
@@ -143,7 +164,7 @@ def initialize_components(config: AppConfig) -> tuple:
             content_strategy_agent=content_strategy_agent,
             drafting_agent=drafting_agent,
             trend_monitor=None,  # Stub for MVP
-            telegram_bot=None    # Stub for MVP
+            telegram_bot=telegram_bot
         )
         logger.info("ContentOrchestrator initialized")
         
@@ -414,6 +435,7 @@ async def async_main(args: argparse.Namespace) -> int:
         Exit code (0 for success, non-zero for failure)
     """
     logger = logging.getLogger(__name__)
+    orchestrator = None
     
     try:
         # Load configuration
@@ -422,7 +444,7 @@ async def async_main(args: argparse.Namespace) -> int:
         logger.info("Configuration loaded successfully")
         
         # Initialize components
-        profile_manager, memory_store, llm_factory, orchestrator = initialize_components(config)
+        profile_manager, memory_store, llm_factory, orchestrator = await initialize_components(config)
         
         # Execute command
         if args.command == "start":
@@ -454,6 +476,13 @@ async def async_main(args: argparse.Namespace) -> int:
     except Exception as e:
         logger.error(f"Application error: {e}", exc_info=True)
         return 1
+    finally:
+        # Cleanup telegram bot connection
+        if orchestrator and orchestrator.telegram_bot:
+            try:
+                await orchestrator.telegram_bot.disconnect()
+            except Exception as e:
+                logger.warning(f"Error disconnecting telegram bot: {e}")
 
 
 def main() -> int:

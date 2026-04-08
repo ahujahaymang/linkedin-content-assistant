@@ -293,8 +293,6 @@ class ContentOrchestrator:
     ) -> bool:
         """Deliver post draft to Telegram for manual posting.
         
-        This is a stub for MVP - actual Telegram integration will be added later.
-        
         Args:
             post: LinkedIn post to deliver
             profile_id: Profile identifier
@@ -303,21 +301,26 @@ class ContentOrchestrator:
             True if delivery successful, False otherwise
         """
         try:
+            logger.info(f"deliver_to_telegram called, telegram_bot type: {type(self.telegram_bot)}")
             if self.telegram_bot is None:
                 logger.info("Telegram bot not configured - skipping delivery")
                 # Store delivery event as pending
                 await self._store_delivery_event(profile_id, post, "pending", "Telegram not configured")
                 return False
             
-            # TODO: Implement actual Telegram delivery in Task 9
             logger.info(f"Delivering post to Telegram for profile: {profile_id}")
             
-            # Placeholder for actual delivery
-            # success = await self.telegram_bot.send_post_draft(post, profile_id)
+            # Send post draft via Telegram
+            success = await self.telegram_bot.send_post_draft(post, profile_id)
             
-            # For MVP, just log and return True
-            await self._store_delivery_event(profile_id, post, "delivered", None)
-            return True
+            if success:
+                logger.info(f"Successfully delivered post to Telegram for profile: {profile_id}")
+                await self._store_delivery_event(profile_id, post, "delivered", None)
+            else:
+                logger.warning(f"Failed to deliver post to Telegram for profile: {profile_id}")
+                await self._store_delivery_event(profile_id, post, "failed", "Delivery returned False")
+            
+            return success
             
         except Exception as e:
             logger.error(f"Telegram delivery failed: {e}")

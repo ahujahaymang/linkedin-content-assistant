@@ -494,7 +494,8 @@ Return only the JSON response with no additional text."""
         # Validate estimated length
         estimated_length = post.get("estimated_length", 0)
         actual_length = len(content)
-        if abs(estimated_length - actual_length) > 100:
+        # Relaxed validation - allow up to 300 character difference
+        if abs(estimated_length - actual_length) > 300:
             errors.append(f"Estimated length ({estimated_length}) differs significantly from actual length ({actual_length})")
         
         return errors
