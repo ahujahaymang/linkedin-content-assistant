@@ -20,15 +20,16 @@ logger = logging.getLogger(__name__)
 class ProfileMemoryStore:
     """Profile-specific memory storage with isolated directories."""
     
-    def __init__(self, base_dir: str = "data/memory"):
+    def __init__(self, base_dir: str = "data/memory", llm_factory=None):
         """Initialize profile memory store.
         
         Args:
             base_dir: Base directory for all profile data
+            llm_factory: Optional LLM factory for deep content analysis
         """
         self.base_dir = Path(base_dir)
         self.base_dir.mkdir(parents=True, exist_ok=True)
-        self.content_intelligence = ContentIntelligence()
+        self.content_intelligence = ContentIntelligence(llm_factory=llm_factory)
     
     def _get_profile_dir(self, profile_id: str) -> Path:
         """Get directory path for a profile."""
@@ -185,8 +186,67 @@ class ProfileMemoryStore:
         
         logger.info(f"Running content intelligence analysis on {len(posts)} posts for {profile_id}")
         
-        # Perform comprehensive analysis
-        analysis = self.content_intelligence.analyze_content_landscape(posts)
+        # Perform comprehensive analysis (with LLM if available)
+        analysis = self.content_intelligence.analyze_content_landscape(posts, use_llm=True)
+        
+        # Generate strategic direction
+        direction = self.content_intelligence.generate_content_direction(analysis)
+        
+        # Combine results
+        intelligence = {
+            "profile_id": profile_id,
+            "analyzed_at": datetime.utcnow().isoformat(),
+            "posts_analyzed": len(posts),
+            "landscape_analysis": analysis,
+            "strategic_direction": direction
+        }
+        
+        # Store the analysis
+        self.store_content_intelligence(profile_id, intelligence)
+        
+        return intelligence
+    
+    async def analyze_content_intelligence_async(self, profile_id: str) -> Dict[str, Any]:
+        """Async version of content intelligence analysis with LLM support.
+        
+        Args:
+            profile_id: Profile identifier
+            
+        Returns:
+            Content intelligence analysis with LLM insights
+        """
+        posts = self._load_posts(profile_id)
+        
+        if not posts:
+            logger.warning(f"No posts available for content intelligence analysis: {profile_id}")
+            return {"message": "No posts available"}
+        
+        logger.info(f"Running async content intelligence analysis on {len(posts)} posts for {profile_id}")
+        
+        # Phase 1: Rule-based analysis
+        analysis = {
+            "total_posts_analyzed": len(posts),
+            "themes": self.content_intelligence._extract_themes(posts),
+            "engagement_patterns": self.content_intelligence._analyze_engagement(posts),
+            "content_evolution": self.content_intelligence._track_content_evolution(posts),
+            "knowledge_domains": self.content_intelligence._identify_knowledge_domains(posts),
+            "audience_insights": self.content_intelligence._extract_audience_insights(posts),
+            "content_gaps": self.content_intelligence._identify_content_gaps(posts),
+            "successful_patterns": self.content_intelligence._identify_successful_patterns(posts),
+            "key_messages": self.content_intelligence._extract_key_messages(posts),
+            "content_progression": self.content_intelligence._analyze_content_progression(posts)
+        }
+        
+        # Phase 2: LLM deep analysis
+        if self.content_intelligence.llm_factory:
+            logger.info("Running LLM-powered deep analysis...")
+            try:
+                llm_insights = await self.content_intelligence._llm_deep_analysis(posts, analysis)
+                analysis["llm_insights"] = llm_insights
+                logger.info("LLM deep analysis completed")
+            except Exception as e:
+                logger.warning(f"LLM deep analysis failed: {e}")
+                analysis["llm_insights"] = {"error": str(e)}
         
         # Generate strategic direction
         direction = self.content_intelligence.generate_content_direction(analysis)

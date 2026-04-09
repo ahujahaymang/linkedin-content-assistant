@@ -118,12 +118,7 @@ async def initialize_components(config: AppConfig) -> tuple:
         )
         logger.info(f"MemoryStore initialized (type: {config.memory.storage_type})")
         
-        # Initialize ProfileMemoryStore (new - for profile-specific data)
-        logger.info("Initializing ProfileMemoryStore...")
-        profile_store = ProfileMemoryStore(base_dir=config.memory.directory)
-        logger.info("ProfileMemoryStore initialized")
-        
-        # Initialize LLMFactory
+        # Initialize LLMFactory (before ProfileMemoryStore for deep analysis)
         logger.info("Initializing LLMFactory...")
         llm_config = _create_llm_config(config)
         llm_factory = LLMFactory(llm_config)
@@ -134,6 +129,14 @@ async def initialize_components(config: AppConfig) -> tuple:
         if not healthy_providers:
             raise RuntimeError("No healthy LLM providers available")
         logger.info(f"LLMFactory initialized with {len(healthy_providers)} healthy provider(s)")
+        
+        # Initialize ProfileMemoryStore (with LLM factory for deep analysis)
+        logger.info("Initializing ProfileMemoryStore...")
+        profile_store = ProfileMemoryStore(
+            base_dir=config.memory.directory,
+            llm_factory=llm_factory
+        )
+        logger.info("ProfileMemoryStore initialized")
         
         # Initialize Agents
         logger.info("Initializing Content Agents...")
@@ -534,7 +537,9 @@ async def async_main(args: argparse.Namespace) -> int:
             logger.info(f"Analyzing Content Intelligence: {args.profile}")
             logger.info("=" * 80)
             
-            intelligence = profile_store.get_content_intelligence(args.profile, refresh=refresh)
+            # Use async version for LLM analysis
+            import asyncio
+            intelligence = await profile_store.analyze_content_intelligence_async(args.profile)
             
             if intelligence.get('message'):
                 logger.info(intelligence['message'])
@@ -570,6 +575,68 @@ async def async_main(args: argparse.Namespace) -> int:
                 audience = landscape.get('audience_insights', {})
                 logger.info(f"  Primary Stage: {audience.get('primary_audience_stage', 'Unknown')}")
                 logger.info(f"  Distribution: {audience.get('audience_distribution', {})}")
+                
+                # Show LLM insights if available
+                llm_insights = landscape.get('llm_insights', {})
+                if llm_insights and 'error' not in llm_insights:
+                    logger.info("\n" + "=" * 80)
+                    logger.info("LLM-POWERED DEEP INSIGHTS")
+                    logger.info("=" * 80)
+                    
+                    # Unique voice
+                    unique_voice = llm_insights.get('unique_voice', {})
+                    if unique_voice:
+                        logger.info("\n--- UNIQUE VOICE & POSITIONING ---")
+                        logger.info(f"  Distinctive Angle: {unique_voice.get('distinctive_angle', 'N/A')}")
+                        logger.info(f"  Positioning: {unique_voice.get('positioning', 'N/A')}")
+                        core_beliefs = unique_voice.get('core_beliefs', [])
+                        if core_beliefs:
+                            logger.info("  Core Beliefs:")
+                            for belief in core_beliefs[:3]:
+                                logger.info(f"    • {belief}")
+                    
+                    # Semantic themes
+                    semantic = llm_insights.get('semantic_themes', {})
+                    if semantic:
+                        logger.info("\n--- SEMANTIC THEMES ---")
+                        logger.info(f"  Narrative: {semantic.get('overarching_narrative', 'N/A')}")
+                        primary_themes = semantic.get('primary_themes', [])
+                        if primary_themes:
+                            logger.info("  Primary Themes:")
+                            for theme in primary_themes[:3]:
+                                logger.info(f"    • {theme.get('theme')}: {theme.get('description', '')[:80]}")
+                    
+                    # Strategic opportunities
+                    opportunities = llm_insights.get('strategic_opportunities', {})
+                    if opportunities:
+                        logger.info("\n--- LLM STRATEGIC OPPORTUNITIES ---")
+                        underexplored = opportunities.get('underexplored_angles', [])
+                        if underexplored:
+                            logger.info("  Underexplored Angles:")
+                            for angle in underexplored[:3]:
+                                logger.info(f"    • {angle.get('angle')}: {angle.get('rationale', '')[:80]} [{angle.get('potential_impact')}]")
+                        
+                        recommended = opportunities.get('recommended_topics', [])
+                        if recommended:
+                            logger.info("  Recommended Topics:")
+                            for topic in recommended[:3]:
+                                logger.info(f"    • {topic.get('topic')}: {topic.get('why', '')[:80]}")
+                    
+                    # Quality patterns
+                    quality = llm_insights.get('quality_patterns', {})
+                    if quality:
+                        logger.info("\n--- QUALITY PATTERNS ---")
+                        what_works = quality.get('what_works', [])
+                        if what_works:
+                            logger.info("  What Works:")
+                            for pattern in what_works[:3]:
+                                logger.info(f"    • {pattern}")
+                        
+                        do_more = quality.get('do_more', [])
+                        if do_more:
+                            logger.info("  Do More:")
+                            for action in do_more[:3]:
+                                logger.info(f"    • {action}")
                 
             logger.info("=" * 80)
             
@@ -685,6 +752,12 @@ Examples:
         type=str,
         default=None,
         help="File path (required for import-history command)"
+    )
+    
+    parser.add_argument(
+        "--refresh",
+        action="store_true",
+        help="Force refresh of cached analysis (for analyze-content command)"
     )
     
     args = parser.parse_args()

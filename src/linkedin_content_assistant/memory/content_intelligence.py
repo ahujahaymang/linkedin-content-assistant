@@ -6,10 +6,15 @@ This module analyzes historical posts to derive:
 - Knowledge gaps and unexplored angles
 - Content evolution and progression
 - Audience response patterns
+
+Uses a hybrid approach:
+- Rule-based analysis for fast statistical insights
+- LLM-powered analysis for deep semantic understanding
 """
 
 import logging
 import re
+import json
 from collections import Counter, defaultdict
 from typing import Dict, List, Any, Optional, Set, Tuple
 from datetime import datetime
@@ -20,15 +25,20 @@ logger = logging.getLogger(__name__)
 class ContentIntelligence:
     """Analyzes historical posts to extract strategic content insights."""
     
-    def __init__(self):
-        """Initialize content intelligence analyzer."""
-        pass
+    def __init__(self, llm_factory=None):
+        """Initialize content intelligence analyzer.
+        
+        Args:
+            llm_factory: Optional LLM factory for deep analysis
+        """
+        self.llm_factory = llm_factory
     
-    def analyze_content_landscape(self, posts: List[Dict[str, Any]]) -> Dict[str, Any]:
+    def analyze_content_landscape(self, posts: List[Dict[str, Any]], use_llm: bool = True) -> Dict[str, Any]:
         """Perform comprehensive analysis of historical content.
         
         Args:
             posts: List of historical post dictionaries
+            use_llm: Whether to use LLM for deep analysis (default: True)
             
         Returns:
             Dictionary with strategic content insights
@@ -38,6 +48,7 @@ class ContentIntelligence:
         
         logger.info(f"Analyzing content landscape from {len(posts)} posts")
         
+        # Phase 1: Fast rule-based analysis
         analysis = {
             "total_posts_analyzed": len(posts),
             "themes": self._extract_themes(posts),
@@ -50,6 +61,26 @@ class ContentIntelligence:
             "key_messages": self._extract_key_messages(posts),
             "content_progression": self._analyze_content_progression(posts)
         }
+        
+        # Phase 2: Deep LLM-powered analysis (if available and requested)
+        if use_llm and self.llm_factory:
+            logger.info("Running LLM-powered deep analysis...")
+            try:
+                import asyncio
+                # Check if we're in an event loop
+                try:
+                    loop = asyncio.get_running_loop()
+                    # We're in an event loop, need to handle differently
+                    logger.warning("Cannot run async LLM analysis from sync context - skipping")
+                    analysis["llm_insights"] = {"message": "LLM analysis requires async context"}
+                except RuntimeError:
+                    # No event loop, we can use asyncio.run
+                    llm_insights = asyncio.run(self._llm_deep_analysis(posts, analysis))
+                    analysis["llm_insights"] = llm_insights
+                    logger.info("LLM deep analysis completed")
+            except Exception as e:
+                logger.warning(f"LLM deep analysis failed: {e}")
+                analysis["llm_insights"] = {"error": str(e)}
         
         return analysis
     
@@ -565,3 +596,256 @@ class ContentIntelligence:
             recommendations.append(f"High-engagement posts average {int(avg_length)} characters - aim for similar length")
         
         return recommendations
+
+    
+    # ========== LLM-Powered Deep Analysis ==========
+    
+    async def _llm_deep_analysis(self, posts: List[Dict[str, Any]], rule_based_analysis: Dict[str, Any]) -> Dict[str, Any]:
+        """Perform deep semantic analysis using LLM.
+        
+        Args:
+            posts: List of historical posts
+            rule_based_analysis: Results from rule-based analysis
+            
+        Returns:
+            Dictionary with LLM-generated insights
+        """
+        # Select representative posts for analysis (to manage token usage)
+        sample_posts = self._select_representative_posts(posts, max_posts=20)
+        
+        # Build analysis prompt
+        system_prompt = self._build_llm_analysis_system_prompt()
+        user_prompt = self._build_llm_analysis_user_prompt(sample_posts, rule_based_analysis)
+        
+        # Generate insights
+        response = await self.llm_factory.generate_with_system(
+            system_prompt=system_prompt,
+            user_prompt=user_prompt,
+            temperature=0.3,  # Lower temperature for analytical tasks
+            max_tokens=3000
+        )
+        
+        # Parse response
+        insights = self._parse_llm_insights(response.content)
+        
+        return insights
+    
+    def _select_representative_posts(self, posts: List[Dict[str, Any]], max_posts: int = 20) -> List[Dict[str, Any]]:
+        """Select representative posts for LLM analysis.
+        
+        Strategy:
+        - Include top performing posts (by engagement)
+        - Include recent posts
+        - Include diverse content (different lengths, themes)
+        """
+        if len(posts) <= max_posts:
+            return posts
+        
+        # Sort by engagement
+        posts_with_engagement = []
+        for post in posts:
+            engagement = post.get('engagement', {})
+            likes_str = str(engagement.get('likes', '0') or '0').replace(',', '')
+            comments_str = str(engagement.get('comments', '0') or '0').replace(',', '')
+            
+            try:
+                likes = int(likes_str)
+                comments = int(comments_str)
+                total_engagement = likes + comments * 2
+            except ValueError:
+                total_engagement = 0
+            
+            posts_with_engagement.append((post, total_engagement))
+        
+        # Sort by engagement
+        posts_with_engagement.sort(key=lambda x: x[1], reverse=True)
+        
+        # Take top 10 by engagement
+        top_posts = [p[0] for p in posts_with_engagement[:10]]
+        
+        # Take 10 most recent (from beginning of list)
+        recent_posts = posts[:10]
+        
+        # Combine and deduplicate
+        selected = []
+        seen_content = set()
+        
+        for post in top_posts + recent_posts:
+            content_preview = post.get('content', '')[:100]
+            if content_preview not in seen_content:
+                selected.append(post)
+                seen_content.add(content_preview)
+            
+            if len(selected) >= max_posts:
+                break
+        
+        return selected
+    
+    def _build_llm_analysis_system_prompt(self) -> str:
+        """Build system prompt for LLM content analysis."""
+        return """You are a LinkedIn Content Strategy Analyst with expertise in:
+- Identifying unique voice and perspective patterns
+- Semantic theme clustering and topic analysis
+- Content quality assessment and engagement drivers
+- Strategic content gap identification
+- Narrative arc and content progression analysis
+
+Your task is to analyze historical LinkedIn posts and provide deep strategic insights that go beyond surface-level keyword matching.
+
+Focus on:
+1. UNIQUE VOICE: What makes this person's perspective distinctive?
+2. SEMANTIC THEMES: What are the underlying themes beyond keywords?
+3. ENGAGEMENT DRIVERS: Why do certain posts resonate more?
+4. CONTENT EVOLUTION: How has their narrative evolved?
+5. STRATEGIC OPPORTUNITIES: What unexplored angles would add value?
+
+Provide actionable, specific insights that can guide future content creation."""
+    
+    def _build_llm_analysis_user_prompt(self, posts: List[Dict[str, Any]], rule_based_analysis: Dict[str, Any]) -> str:
+        """Build user prompt with posts and context."""
+        
+        # Extract rule-based insights for context
+        dominant_themes = rule_based_analysis.get('themes', {}).get('dominant_themes', [])
+        primary_audience = rule_based_analysis.get('audience_insights', {}).get('primary_audience_stage', 'unknown')
+        
+        prompt = f"""Analyze these LinkedIn posts to extract deep strategic insights.
+
+CONTEXT FROM RULE-BASED ANALYSIS:
+- Dominant themes: {', '.join(dominant_themes)}
+- Primary audience: {primary_audience}
+- Total posts in history: {rule_based_analysis.get('total_posts_analyzed', 0)}
+
+SAMPLE POSTS FOR ANALYSIS (representative selection):
+"""
+        
+        # Add sample posts
+        for i, post in enumerate(posts[:20], 1):
+            content = post.get('content', '')
+            engagement = post.get('engagement', {})
+            likes = engagement.get('likes', '0')
+            comments = engagement.get('comments', '0')
+            
+            # Truncate long posts
+            if len(content) > 500:
+                content = content[:500] + "..."
+            
+            prompt += f"""
+
+POST {i}:
+Content: {content}
+Engagement: {likes} likes, {comments} comments
+---"""
+        
+        prompt += """
+
+ANALYSIS REQUIRED:
+
+1. UNIQUE VOICE & PERSPECTIVE:
+   - What is this person's distinctive angle or lens?
+   - What recurring beliefs or principles emerge?
+   - How do they position themselves differently?
+
+2. SEMANTIC THEME CLUSTERS:
+   - What are the 3-5 core themes (beyond keyword matching)?
+   - How do these themes interconnect?
+   - What's the overarching narrative?
+
+3. ENGAGEMENT DRIVERS:
+   - What specific elements drive engagement?
+   - What content patterns correlate with high performance?
+   - What emotional or intellectual triggers work?
+
+4. CONTENT EVOLUTION:
+   - How has their content matured or shifted?
+   - What new territories are they exploring?
+   - What's the trajectory?
+
+5. STRATEGIC CONTENT OPPORTUNITIES:
+   - What valuable angles are underexplored?
+   - What would add depth to their content landscape?
+   - What specific topics would resonate with their audience?
+   - What content formats or approaches should they try?
+
+6. CONTENT QUALITY PATTERNS:
+   - What makes their best posts work?
+   - What structural or stylistic elements are most effective?
+   - What should they do more/less of?
+
+Return your analysis as a JSON object with this structure:
+{
+    "unique_voice": {
+        "distinctive_angle": "string",
+        "core_beliefs": ["belief1", "belief2", "belief3"],
+        "positioning": "string"
+    },
+    "semantic_themes": {
+        "primary_themes": [
+            {"theme": "string", "description": "string", "interconnections": "string"}
+        ],
+        "overarching_narrative": "string"
+    },
+    "engagement_drivers": {
+        "key_elements": ["element1", "element2"],
+        "successful_patterns": ["pattern1", "pattern2"],
+        "emotional_triggers": ["trigger1", "trigger2"]
+    },
+    "content_evolution": {
+        "maturation": "string",
+        "new_territories": ["territory1", "territory2"],
+        "trajectory": "string"
+    },
+    "strategic_opportunities": {
+        "underexplored_angles": [
+            {"angle": "string", "rationale": "string", "potential_impact": "high|medium|low"}
+        ],
+        "recommended_topics": [
+            {"topic": "string", "why": "string", "approach": "string"}
+        ],
+        "format_experiments": ["format1", "format2"]
+    },
+    "quality_patterns": {
+        "what_works": ["pattern1", "pattern2"],
+        "structural_elements": ["element1", "element2"],
+        "do_more": ["action1", "action2"],
+        "do_less": ["action1", "action2"]
+    }
+}
+
+Be specific, actionable, and insightful. Avoid generic advice."""
+        
+        return prompt
+    
+    def _parse_llm_insights(self, response_content: str) -> Dict[str, Any]:
+        """Parse LLM response into structured insights."""
+        try:
+            # Clean response
+            content = response_content.strip()
+            
+            # Remove markdown code blocks if present
+            if content.startswith("```json"):
+                content = content[7:]
+            if content.startswith("```"):
+                content = content[3:]
+            if content.endswith("```"):
+                content = content[:-3]
+            
+            content = content.strip()
+            
+            # Parse JSON
+            insights = json.loads(content)
+            
+            return insights
+            
+        except json.JSONDecodeError as e:
+            logger.error(f"Failed to parse LLM insights: {e}")
+            logger.error(f"Response content: {response_content[:500]}")
+            return {
+                "error": "Failed to parse LLM response",
+                "raw_response": response_content[:1000]
+            }
+        except Exception as e:
+            logger.error(f"Unexpected error parsing LLM insights: {e}")
+            return {
+                "error": str(e),
+                "raw_response": response_content[:1000]
+            }
