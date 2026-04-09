@@ -412,6 +412,11 @@ async def start_scheduler(
     else:
         logger.info(f"Monitoring {len(profiles)} profile(s): {', '.join(profiles)}")
     
+    # Process any pending /posted messages before starting generation
+    if config.telegram.enabled:
+        logger.info("Checking for pending /posted messages...")
+        await process_pending_telegram_messages(orchestrator, profile_manager, config)
+    
     logger.info("Scheduler started. Press Ctrl+C to stop.")
     logger.info("=" * 80)
     
@@ -433,6 +438,92 @@ async def start_scheduler(
             await asyncio.sleep(config.scheduler.check_interval)
     
     logger.info("Scheduler stopped")
+
+
+async def process_pending_telegram_messages(
+    orchestrator: ContentOrchestrator,
+    profile_manager: ProfileManager,
+    config: AppConfig
+) -> None:
+    """Process any pending /posted messages from Telegram.
+    
+    Args:
+        orchestrator: Content orchestrator instance
+        profile_manager: Profile manager instance
+        config: Application configuration
+    """
+    logger = logging.getLogger(__name__)
+    
+    from linkedin_content_assistant.delivery.telegram_bot import TelegramBot
+    
+    telegram_bot = TelegramBot(config.telegram)
+    
+    try:
+        # Connect to Telegram
+        await telegram_bot.connect()
+        
+        # Get all updates (pending messages)
+        updates = await telegram_bot._get_updates()
+        
+        if not updates:
+            logger.info("No pending Telegram messages")
+            return
+        
+        logger.info(f"Found {len(updates)} pending Telegram message(s)")
+        
+        # Process each update
+        for update in updates:
+            try:
+                feedback = await telegram_bot.handle_user_feedback(update)
+                
+                if feedback:
+                    # Determine which profile this is for (for now, use first profile)
+                    # In future, could track profile per chat_id
+                    profiles = profile_manager.list_profiles()
+                    if not profiles:
+                        logger.warning("No profiles found to process feedback")
+                        continue
+                    
+                    profile_id = profiles[0]  # Use first profile for now
+                    profile_store = orchestrator.profile_store
+                    
+                    if feedback.action == "posted":
+                        draft = profile_store.pop_pending_draft(profile_id)
+                        
+                        if draft:
+                            profile_store.save_posted_draft(
+                                profile_id,
+                                draft["content"],
+                                draft["hashtags"]
+                            )
+                            
+                            remaining = profile_store.get_pending_draft_count(profile_id)
+                            logger.info(f"✓ Processed /posted for {profile_id} ({remaining} pending)")
+                            
+                            await telegram_bot.send_alert(
+                                f"✓ Post saved to history!\n"
+                                f"Total posts: {profile_store.get_post_count(profile_id)}\n"
+                                f"Pending: {remaining}"
+                            )
+                        else:
+                            logger.warning(f"No pending drafts for {profile_id}")
+                    
+                    elif feedback.action == "skipped":
+                        draft = profile_store.pop_pending_draft(profile_id)
+                        if draft:
+                            remaining = profile_store.get_pending_draft_count(profile_id)
+                            reason = feedback.reason or "No reason"
+                            logger.info(f"Skipped draft for {profile_id}: {reason} ({remaining} pending)")
+            
+            except Exception as e:
+                logger.error(f"Error processing update: {e}")
+        
+        logger.info("Finished processing pending messages")
+        
+    except Exception as e:
+        logger.error(f"Error processing Telegram messages: {e}")
+    finally:
+        await telegram_bot.disconnect()
 
 
 async def async_main(args: argparse.Namespace) -> int:
@@ -697,15 +788,15 @@ async def async_main(args: argparse.Namespace) -> int:
                 # Define callback for handling feedback
                 async def handle_feedback(feedback, last_draft):
                     """Handle /posted or /skip feedback."""
-                    # Get the actual last draft from profile store
-                    draft = profile_store.get_last_draft(args.profile)
-                    
-                    if not draft:
-                        logger.warning("No draft found - generate a post first")
-                        await telegram_bot.send_alert("⚠️ No draft found. Generate a post first with generate-once command.")
-                        return
-                    
                     if feedback.action == "posted":
+                        # Pop the oldest draft from the queue
+                        draft = profile_store.pop_pending_draft(args.profile)
+                        
+                        if not draft:
+                            logger.warning("No pending drafts found")
+                            await telegram_bot.send_alert("⚠️ No pending drafts. Generate a post first.")
+                            return
+                        
                         # Save to history
                         profile_store.save_posted_draft(
                             args.profile,
@@ -713,19 +804,30 @@ async def async_main(args: argparse.Namespace) -> int:
                             draft["hashtags"]
                         )
                         
-                        logger.info(f"✓ Post saved to history for {args.profile}")
+                        remaining = profile_store.get_pending_draft_count(args.profile)
+                        logger.info(f"✓ Post saved to history for {args.profile} ({remaining} pending)")
+                        
                         await telegram_bot.send_alert(
                             f"✓ Post saved to your history!\n\n"
-                            f"Total posts: {profile_store.get_post_count(args.profile)}"
+                            f"Total posts: {profile_store.get_post_count(args.profile)}\n"
+                            f"Pending drafts: {remaining}"
                         )
                     
                     elif feedback.action == "skipped":
-                        reason = feedback.reason or "No reason provided"
-                        logger.info(f"Post skipped: {reason}")
+                        # Pop and discard the oldest draft
+                        draft = profile_store.pop_pending_draft(args.profile)
                         
-                        # Clear the draft
-                        profile_store.clear_last_draft(args.profile)
-                        await telegram_bot.send_alert(f"Post skipped: {reason}")
+                        if draft:
+                            reason = feedback.reason or "No reason provided"
+                            remaining = profile_store.get_pending_draft_count(args.profile)
+                            logger.info(f"Post skipped: {reason} ({remaining} pending)")
+                            await telegram_bot.send_alert(
+                                f"Post skipped: {reason}\n"
+                                f"Pending drafts: {remaining}"
+                            )
+                        else:
+                            logger.warning("No pending drafts to skip")
+                            await telegram_bot.send_alert("⚠️ No pending drafts to skip")
                 
                 # Start polling
                 await telegram_bot.start_polling(handle_feedback)

@@ -102,64 +102,96 @@ class ProfileMemoryStore:
         # Store as historical post
         self.store_historical_post(profile_id, post_data)
         
-        # Clear the last draft
-        self.clear_last_draft(profile_id)
-        
         logger.info(f"Saved posted draft to history for {profile_id}")
     
-    def save_last_draft(self, profile_id: str, post_content: str, hashtags: List[str]) -> None:
-        """Save the last sent draft for /posted command.
+    def add_pending_draft(self, profile_id: str, post_content: str, hashtags: List[str]) -> None:
+        """Add a draft to the pending queue.
         
         Args:
             profile_id: Profile identifier
             post_content: The draft content
             hashtags: List of hashtags
         """
-        draft_file = self._get_last_draft_file(profile_id)
+        drafts_file = self._get_pending_drafts_file(profile_id)
         
+        # Load existing queue
+        if drafts_file.exists():
+            try:
+                with open(drafts_file, 'r') as f:
+                    queue = json.load(f)
+            except (json.JSONDecodeError, IOError):
+                queue = []
+        else:
+            queue = []
+        
+        # Add new draft to queue
         draft_data = {
             "content": post_content,
             "hashtags": hashtags,
             "sent_at": datetime.utcnow().isoformat()
         }
+        queue.append(draft_data)
         
-        with open(draft_file, 'w') as f:
-            json.dump(draft_data, f, indent=2)
+        # Save queue
+        with open(drafts_file, 'w') as f:
+            json.dump(queue, f, indent=2)
         
-        logger.debug(f"Saved last draft for {profile_id}")
+        logger.info(f"Added draft to pending queue for {profile_id} (queue size: {len(queue)})")
     
-    def get_last_draft(self, profile_id: str) -> Optional[Dict[str, Any]]:
-        """Get the last sent draft.
+    def pop_pending_draft(self, profile_id: str) -> Optional[Dict[str, Any]]:
+        """Remove and return the oldest pending draft.
         
         Args:
             profile_id: Profile identifier
             
         Returns:
-            Draft data or None
+            Draft data or None if queue is empty
         """
-        draft_file = self._get_last_draft_file(profile_id)
+        drafts_file = self._get_pending_drafts_file(profile_id)
         
-        if not draft_file.exists():
+        if not drafts_file.exists():
             return None
         
         try:
-            with open(draft_file, 'r') as f:
-                return json.load(f)
+            with open(drafts_file, 'r') as f:
+                queue = json.load(f)
         except (json.JSONDecodeError, IOError) as e:
-            logger.error(f"Failed to load last draft for {profile_id}: {e}")
+            logger.error(f"Failed to load pending drafts for {profile_id}: {e}")
             return None
+        
+        if not queue:
+            return None
+        
+        # Pop the oldest draft (FIFO)
+        draft = queue.pop(0)
+        
+        # Save updated queue
+        with open(drafts_file, 'w') as f:
+            json.dump(queue, f, indent=2)
+        
+        logger.info(f"Popped draft from queue for {profile_id} (remaining: {len(queue)})")
+        return draft
     
-    def clear_last_draft(self, profile_id: str) -> None:
-        """Clear the last draft file.
+    def get_pending_draft_count(self, profile_id: str) -> int:
+        """Get the number of pending drafts.
         
         Args:
             profile_id: Profile identifier
+            
+        Returns:
+            Number of pending drafts
         """
-        draft_file = self._get_last_draft_file(profile_id)
+        drafts_file = self._get_pending_drafts_file(profile_id)
         
-        if draft_file.exists():
-            draft_file.unlink()
-            logger.debug(f"Cleared last draft for {profile_id}")
+        if not drafts_file.exists():
+            return 0
+        
+        try:
+            with open(drafts_file, 'r') as f:
+                queue = json.load(f)
+                return len(queue)
+        except (json.JSONDecodeError, IOError):
+            return 0
     
     def get_historical_posts(
         self,

@@ -320,8 +320,8 @@ class ContentOrchestrator:
                 logger.info(f"Successfully delivered post to Telegram for profile: {profile_id}")
                 await self._store_delivery_event(profile_id, post, "delivered", None)
                 
-                # Save draft for /posted command
-                self.profile_store.save_last_draft(
+                # Add draft to pending queue for /posted command
+                self.profile_store.add_pending_draft(
                     profile_id,
                     post.content,
                     post.hashtags
