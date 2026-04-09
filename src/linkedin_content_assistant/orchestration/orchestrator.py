@@ -51,6 +51,7 @@ class ContentOrchestrator:
         self,
         profile_manager: ProfileManager,
         memory_store: MemoryStore,
+        profile_store: Any,  # ProfileMemoryStore for historical data
         content_strategy_agent: ContentStrategyAgent,
         drafting_agent: DraftingAgent,
         trend_monitor: Optional[Any] = None,  # Will be implemented in later tasks
@@ -61,6 +62,7 @@ class ContentOrchestrator:
         Args:
             profile_manager: Profile configuration manager
             memory_store: Memory store for history and events
+            profile_store: Profile-specific memory store for historical posts
             content_strategy_agent: Agent for generating post options
             drafting_agent: Agent for drafting final posts
             trend_monitor: Optional trend monitor (stub for MVP)
@@ -68,6 +70,7 @@ class ContentOrchestrator:
         """
         self.profile_manager = profile_manager
         self.memory_store = memory_store
+        self.profile_store = profile_store
         self.content_strategy_agent = content_strategy_agent
         self.drafting_agent = drafting_agent
         self.trend_monitor = trend_monitor
@@ -151,7 +154,7 @@ class ContentOrchestrator:
             logger.info("Drafting final post...")
             drafting_output = await self.drafting_agent.execute(
                 context, 
-                self.memory_store, 
+                self.profile_store,  # Pass profile_store for historical context
                 selected_option
             )
             

@@ -109,11 +109,20 @@ class DraftingAgent(StatelessAgentMixin, LinkedInAgent):
             # Get recent posts to avoid repetition
             recent_posts = self._get_recent_posts(memory, context.profile_id)
             
+            # Get historical posts for style matching
+            historical_posts = self._get_historical_posts(memory, context.profile_id, limit=10)
+            
+            # Get style analysis if available
+            style_analysis = self._get_style_analysis(memory, context.profile_id)
+            
+            # Get content intelligence for strategic direction
+            content_intelligence = self._get_content_intelligence(memory, context.profile_id)
+            
             # Build system prompt for drafting
-            system_prompt = self._build_system_prompt(context)
+            system_prompt = self._build_system_prompt(context, style_analysis, content_intelligence)
             
             # Build user prompt with content idea and constraints
-            user_prompt = self._build_user_prompt(idea, context, recent_posts)
+            user_prompt = self._build_user_prompt(idea, context, recent_posts, historical_posts)
             
             # Generate LinkedIn post using LLM
             response = await self.llm_factory.generate_with_system(
@@ -137,7 +146,10 @@ class DraftingAgent(StatelessAgentMixin, LinkedInAgent):
                     "profile_version": context.version,
                     "content_theme": idea.content_theme,
                     "target_audience": idea.target_audience,
-                    "recent_posts_count": len(recent_posts)
+                    "recent_posts_count": len(recent_posts),
+                    "historical_posts_used": len(historical_posts),
+                    "style_analysis_available": style_analysis is not None,
+                    "content_intelligence_available": content_intelligence is not None
                 },
                 requires_approval=True,
                 confidence_score=self._calculate_confidence_score(drafting_output, context)
@@ -245,12 +257,82 @@ class DraftingAgent(StatelessAgentMixin, LinkedInAgent):
             logger.warning(f"Failed to retrieve recent posts: {e}")
             return []
     
-    def _build_system_prompt(self, context: ProfileContext) -> str:
+    def _get_historical_posts(self, memory: Any, profile_id: str, limit: int = 10) -> List[Dict[str, Any]]:
+        """Get historical posts for style matching.
+        
+        Args:
+            memory: ProfileMemoryStore instance
+            profile_id: Profile identifier
+            limit: Maximum number of posts to retrieve
+            
+        Returns:
+            List of historical post dictionaries
+        """
+        try:
+            # Check if memory is ProfileMemoryStore
+            if hasattr(memory, 'get_historical_posts'):
+                posts = memory.get_historical_posts(profile_id, limit=limit)
+                logger.info(f"Retrieved {len(posts)} historical posts for style matching")
+                return posts
+            else:
+                logger.warning("Memory store does not support get_historical_posts")
+                return []
+        except Exception as e:
+            logger.warning(f"Failed to retrieve historical posts: {e}")
+            return []
+    
+    def _get_style_analysis(self, memory: Any, profile_id: str) -> Optional[Dict[str, Any]]:
+        """Get style analysis for the profile.
+        
+        Args:
+            memory: ProfileMemoryStore instance
+            profile_id: Profile identifier
+            
+        Returns:
+            Style analysis dictionary or None
+        """
+        try:
+            if hasattr(memory, 'get_style_analysis'):
+                analysis = memory.get_style_analysis(profile_id)
+                if analysis:
+                    logger.info(f"Retrieved style analysis for {profile_id}")
+                return analysis
+            else:
+                logger.warning("Memory store does not support get_style_analysis")
+                return None
+        except Exception as e:
+            logger.warning(f"Failed to retrieve style analysis: {e}")
+            return None
+    
+    def _get_content_intelligence(self, memory: Any, profile_id: str) -> Optional[Dict[str, Any]]:
+        """Get content intelligence analysis for strategic direction.
+        
+        Args:
+            memory: ProfileMemoryStore instance
+            profile_id: Profile identifier
+            
+        Returns:
+            Content intelligence dictionary or None
+        """
+        try:
+            if hasattr(memory, 'get_content_intelligence'):
+                intelligence = memory.get_content_intelligence(profile_id)
+                if intelligence:
+                    logger.info(f"Retrieved content intelligence for {profile_id}")
+                return intelligence
+            else:
+                logger.warning("Memory store does not support get_content_intelligence")
+                return None
+        except Exception as e:
+            logger.warning(f"Failed to retrieve content intelligence: {e}")
+            return None
+    
+    def _build_system_prompt(self, context: ProfileContext, style_analysis: Optional[Dict[str, Any]] = None, content_intelligence: Optional[Dict[str, Any]] = None) -> str:
         """Build system prompt for post drafting."""
         identity = context.identity
         behavior = context.behavior
         
-        return f"""You are a LinkedIn Content Drafting AI that converts content ideas into engaging, professional LinkedIn posts.
+        prompt = f"""You are a LinkedIn Content Drafting AI that converts content ideas into engaging, professional LinkedIn posts.
 
 PROFILE CONTEXT:
 - Professional Identity: {identity.get('headline', 'Professional')}
@@ -263,7 +345,88 @@ PROFILE CONTEXT:
 TONE AND STYLE RULES:
 - Vocabulary Style: {behavior.get('vocabulary_bias', 'professional')}
 - Emoji Usage: {behavior.get('emoji_frequency', 'moderate')}
-- Detail Level: {behavior.get('comment_depth', 'detailed')}
+- Detail Level: {behavior.get('comment_depth', 'detailed')}"""
+        
+        # Add style analysis if available
+        if style_analysis:
+            prompt += f"""
+
+WRITING STYLE ANALYSIS (from historical posts):
+- Average Post Length: {style_analysis.get('avg_post_length', 'N/A')} characters
+- Post Length Distribution:
+  * Short posts (<500 chars): {style_analysis.get('length_distribution', {}).get('short_posts', 0)}
+  * Medium posts (500-1500 chars): {style_analysis.get('length_distribution', {}).get('medium_posts', 0)}
+  * Long posts (>1500 chars): {style_analysis.get('length_distribution', {}).get('long_posts', 0)}
+- Emoji Usage: {style_analysis.get('emoji_usage', {}).get('emoji_frequency', 0):.1%} of posts contain emojis
+- Common Hashtags: {', '.join([h['hashtag'] for h in style_analysis.get('common_hashtags', [])[:5]])}
+- Sentence Structure:
+  * Average sentence length: {style_analysis.get('sentence_patterns', {}).get('avg_sentence_length', 'N/A')} words
+  * Short sentences: {style_analysis.get('sentence_patterns', {}).get('short_sentences', 0)}
+  * Medium sentences: {style_analysis.get('sentence_patterns', {}).get('medium_sentences', 0)}
+  * Long sentences: {style_analysis.get('sentence_patterns', {}).get('long_sentences', 0)}
+
+IMPORTANT: Match the writing style from the analysis above. Use similar post length, sentence structure, and emoji frequency."""
+        
+        # Add content intelligence insights
+        if content_intelligence:
+            strategic = content_intelligence.get('strategic_direction', {})
+            landscape = content_intelligence.get('landscape_analysis', {})
+            
+            # Priority topics
+            priority_topics = strategic.get('priority_topics', [])
+            if priority_topics:
+                prompt += f"""
+
+STRATEGIC CONTENT DIRECTION:
+Priority Topics to Explore:"""
+                for topic in priority_topics[:3]:
+                    prompt += f"""
+  • {topic.get('topic', 'Unknown')}: {topic.get('reason', 'No reason')} (Priority: {topic.get('priority', 'medium')})"""
+            
+            # Content gaps
+            gaps = strategic.get('strategic_gaps', {})
+            if gaps:
+                prompt += f"""
+
+Content Gaps to Fill:"""
+                for category, topics in list(gaps.items())[:2]:
+                    if topics:
+                        prompt += f"""
+  • {category}: {', '.join(topics[:2])}"""
+            
+            # Successful patterns
+            success_patterns = strategic.get('build_on_success', [])
+            if success_patterns:
+                prompt += f"""
+
+Proven Success Patterns:"""
+                for pattern in success_patterns[:3]:
+                    prompt += f"""
+  • {pattern}"""
+            
+            # Dominant themes
+            themes = landscape.get('themes', {})
+            dominant = themes.get('dominant_themes', [])
+            underexplored = themes.get('underexplored_themes', [])
+            
+            if dominant or underexplored:
+                prompt += f"""
+
+Content Landscape:
+  • Dominant themes: {', '.join(dominant[:3])}
+  • Underexplored opportunities: {', '.join(underexplored[:3])}"""
+            
+            # Key messages from history
+            key_messages = landscape.get('key_messages', [])
+            if key_messages:
+                prompt += f"""
+
+Core Messages from Your Content:"""
+                for msg in key_messages[:3]:
+                    prompt += f"""
+  • {msg[:100]}"""
+        
+        prompt += """
 
 LINKEDIN POST REQUIREMENTS:
 1. Start with an engaging hook that matches the provided angle
@@ -288,30 +451,32 @@ FORMATTING GUIDELINES (LINKEDIN-FRIENDLY):
 - Avoid excessive punctuation or ALL CAPS sentences
 
 OUTPUT FORMAT: Return a valid JSON object with this exact structure:
-{{
-    "linkedin_post": {{
+{
+    "linkedin_post": {
         "content": "The complete LinkedIn post content with proper formatting",
         "hashtags": ["hashtag1", "hashtag2", "hashtag3"],
         "call_to_action": "The specific call-to-action or question",
         "estimated_length": 1250,
-        "tone_analysis": {{
+        "tone_analysis": {
             "formality": "professional-casual",
             "engagement_style": "conversational",
             "expertise_level": "senior"
-        }},
+        },
         "formatting_notes": ["Used line breaks for readability", "Included personal insight", "No markdown formatting"]
-    }},
-    "tone_compliance": {{
+    },
+    "tone_compliance": {
         "vocabulary_match": "Matches technical vocabulary preference",
         "emoji_usage": "Moderate emoji usage as requested",
         "detail_level": "Detailed explanation provided"
-    }},
+    },
     "formatting_applied": ["Line breaks", "Emoji emphasis", "Bullet points with symbols", "Hashtag optimization"]
-}}
+}
 
 CRITICAL: The post content must be copy-paste ready for LinkedIn. Do NOT use markdown syntax like **bold** or *italic*. Use plain text with emojis, symbols, and line breaks only."""
+        
+        return prompt
     
-    def _build_user_prompt(self, idea: ContentIdea, context: ProfileContext, recent_posts: List[Dict[str, Any]]) -> str:
+    def _build_user_prompt(self, idea: ContentIdea, context: ProfileContext, recent_posts: List[Dict[str, Any]], historical_posts: List[Dict[str, Any]]) -> str:
         """Build user prompt with content idea and constraints."""
         prompt = f"""Convert this content idea into a LinkedIn post:
 
@@ -324,6 +489,38 @@ CONTENT IDEA:
         
         if idea.additional_context:
             prompt += f"\n- Additional Context: {idea.additional_context}"
+        
+        # Add historical posts for BOTH style matching AND content awareness
+        if historical_posts:
+            prompt += f"\n\nHISTORICAL POSTS (match writing style AND avoid repeating these topics):\n"
+            
+            # Extract topics/themes from historical posts
+            covered_topics = []
+            
+            for i, post in enumerate(historical_posts[:8], 1):  # Show up to 8 examples
+                content = post.get('content', '')
+                if content:
+                    # Extract first line as topic/theme
+                    lines = content.split('\n')
+                    first_line = lines[0] if lines else ''
+                    
+                    # Truncate for context
+                    if len(content) > 250:
+                        content_preview = content[:250] + "..."
+                    else:
+                        content_preview = content
+                    
+                    prompt += f"\nPost {i} (Topic: {first_line[:80]}):\n{content_preview}\n"
+                    
+                    # Track covered topics
+                    if first_line:
+                        covered_topics.append(first_line[:100])
+            
+            # Explicitly list covered topics to avoid
+            if covered_topics:
+                prompt += f"\n\nTOPICS ALREADY COVERED (do NOT repeat):\n"
+                for i, topic in enumerate(covered_topics[:5], 1):
+                    prompt += f"{i}. {topic}\n"
         
         if recent_posts:
             recent_themes = []
@@ -338,20 +535,28 @@ CONTENT IDEA:
                             recent_themes.append(content_lines[0][:100] + "...")
             
             if recent_themes:
-                prompt += f"\n\nRECENT POSTS (avoid repetition):\n"
+                prompt += f"\n\nRECENT GENERATED POSTS (avoid immediate repetition):\n"
                 for i, theme in enumerate(recent_themes, 1):
                     prompt += f"{i}. {theme}\n"
         
         prompt += f"""
 
-REQUIREMENTS:
-1. Use the provided hook as inspiration for the opening
-2. Develop the angle into a full post with insights
-3. Target the specified audience appropriately
-4. Ensure content is authentic to the professional profile
-5. Avoid repeating themes from recent posts
-6. Include actionable insights or thought-provoking questions
-7. Make it engaging for {idea.estimated_engagement} type of interaction
+CRITICAL REQUIREMENTS:
+1. MATCH THE WRITING STYLE from the historical examples (tone, length, structure, emoji usage)
+2. DO NOT REPEAT topics or angles already covered in historical posts
+3. BUILD ON previous insights - reference or extend ideas if relevant, but with fresh perspective
+4. ADD NEW VALUE - bring a unique angle, recent experience, or fresh insight
+5. Use the provided hook as inspiration for the opening
+6. Develop the angle into a full post with original insights
+7. Target the specified audience appropriately
+8. Ensure content is authentic to the professional profile
+9. Include actionable insights or thought-provoking questions
+10. Make it engaging for {idea.estimated_engagement} type of interaction
+
+CONTENT FRESHNESS CHECK:
+- Does this post cover a topic NOT in the historical posts? ✓
+- Does this post add new value beyond what's been shared before? ✓
+- Does this post have a unique angle or fresh perspective? ✓
 
 Return only the JSON response with no additional text."""
         

@@ -12,6 +12,7 @@ from typing import Dict, List, Optional, Any
 from collections import Counter
 
 from .models import MemoryEvent
+from .content_intelligence import ContentIntelligence
 
 logger = logging.getLogger(__name__)
 
@@ -27,6 +28,7 @@ class ProfileMemoryStore:
         """
         self.base_dir = Path(base_dir)
         self.base_dir.mkdir(parents=True, exist_ok=True)
+        self.content_intelligence = ContentIntelligence()
     
     def _get_profile_dir(self, profile_id: str) -> Path:
         """Get directory path for a profile."""
@@ -45,6 +47,10 @@ class ProfileMemoryStore:
     def _get_events_file(self, profile_id: str) -> Path:
         """Get events file path for a profile."""
         return self._get_profile_dir(profile_id) / "events.json"
+    
+    def _get_content_intelligence_file(self, profile_id: str) -> Path:
+        """Get content intelligence file path for a profile."""
+        return self._get_profile_dir(profile_id) / "content_intelligence.json"
     
     # ========== Historical Posts ==========
     
@@ -159,6 +165,84 @@ class ProfileMemoryStore:
         except (json.JSONDecodeError, IOError) as e:
             logger.error(f"Failed to load style analysis for {profile_id}: {e}")
             return None
+    
+    # ========== Content Intelligence ==========
+    
+    def analyze_content_intelligence(self, profile_id: str) -> Dict[str, Any]:
+        """Analyze historical posts to extract strategic content insights.
+        
+        Args:
+            profile_id: Profile identifier
+            
+        Returns:
+            Content intelligence analysis
+        """
+        posts = self._load_posts(profile_id)
+        
+        if not posts:
+            logger.warning(f"No posts available for content intelligence analysis: {profile_id}")
+            return {"message": "No posts available"}
+        
+        logger.info(f"Running content intelligence analysis on {len(posts)} posts for {profile_id}")
+        
+        # Perform comprehensive analysis
+        analysis = self.content_intelligence.analyze_content_landscape(posts)
+        
+        # Generate strategic direction
+        direction = self.content_intelligence.generate_content_direction(analysis)
+        
+        # Combine results
+        intelligence = {
+            "profile_id": profile_id,
+            "analyzed_at": datetime.utcnow().isoformat(),
+            "posts_analyzed": len(posts),
+            "landscape_analysis": analysis,
+            "strategic_direction": direction
+        }
+        
+        # Store the analysis
+        self.store_content_intelligence(profile_id, intelligence)
+        
+        return intelligence
+    
+    def store_content_intelligence(self, profile_id: str, intelligence: Dict[str, Any]) -> None:
+        """Store content intelligence analysis.
+        
+        Args:
+            profile_id: Profile identifier
+            intelligence: Content intelligence data
+        """
+        intelligence_file = self._get_content_intelligence_file(profile_id)
+        
+        with open(intelligence_file, 'w') as f:
+            json.dump(intelligence, f, indent=2)
+        
+        logger.info(f"Stored content intelligence for {profile_id}")
+    
+    def get_content_intelligence(self, profile_id: str, refresh: bool = False) -> Optional[Dict[str, Any]]:
+        """Get content intelligence analysis for a profile.
+        
+        Args:
+            profile_id: Profile identifier
+            refresh: If True, regenerate analysis even if cached
+            
+        Returns:
+            Content intelligence dictionary or None
+        """
+        intelligence_file = self._get_content_intelligence_file(profile_id)
+        
+        # Check if we need to refresh or file doesn't exist
+        if refresh or not intelligence_file.exists():
+            logger.info(f"Generating fresh content intelligence for {profile_id}")
+            return self.analyze_content_intelligence(profile_id)
+        
+        try:
+            with open(intelligence_file, 'r') as f:
+                return json.load(f)
+        except (json.JSONDecodeError, IOError) as e:
+            logger.error(f"Failed to load content intelligence for {profile_id}: {e}")
+            # Try to regenerate
+            return self.analyze_content_intelligence(profile_id)
     
     # ========== Events (Generated Posts, Feedback) ==========
     

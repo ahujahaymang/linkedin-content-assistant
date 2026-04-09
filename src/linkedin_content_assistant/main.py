@@ -167,6 +167,7 @@ async def initialize_components(config: AppConfig) -> tuple:
         orchestrator = ContentOrchestrator(
             profile_manager=profile_manager,
             memory_store=memory_store,
+            profile_store=profile_store,
             content_strategy_agent=content_strategy_agent,
             drafting_agent=drafting_agent,
             trend_monitor=None,  # Stub for MVP
@@ -521,6 +522,59 @@ async def async_main(args: argparse.Namespace) -> int:
             
             return 0
         
+        elif args.command == "analyze-content":
+            # Analyze content intelligence
+            if not args.profile:
+                logger.error("--profile is required for analyze-content command")
+                return 1
+            
+            refresh = getattr(args, 'refresh', False)
+            
+            logger.info("=" * 80)
+            logger.info(f"Analyzing Content Intelligence: {args.profile}")
+            logger.info("=" * 80)
+            
+            intelligence = profile_store.get_content_intelligence(args.profile, refresh=refresh)
+            
+            if intelligence.get('message'):
+                logger.info(intelligence['message'])
+            else:
+                logger.info(f"Posts Analyzed: {intelligence.get('posts_analyzed', 0)}")
+                logger.info(f"Analyzed At: {intelligence.get('analyzed_at', 'Unknown')}")
+                
+                # Show strategic direction
+                strategic = intelligence.get('strategic_direction', {})
+                
+                logger.info("\n--- PRIORITY TOPICS ---")
+                for topic in strategic.get('priority_topics', [])[:3]:
+                    logger.info(f"  • {topic.get('topic')}: {topic.get('reason')} [{topic.get('priority')}]")
+                
+                logger.info("\n--- CONTENT GAPS ---")
+                for category, topics in list(strategic.get('strategic_gaps', {}).items())[:3]:
+                    if topics:
+                        logger.info(f"  {category}: {', '.join(topics[:2])}")
+                
+                logger.info("\n--- SUCCESS PATTERNS ---")
+                for pattern in strategic.get('build_on_success', [])[:3]:
+                    logger.info(f"  • {pattern}")
+                
+                # Show landscape insights
+                landscape = intelligence.get('landscape_analysis', {})
+                themes = landscape.get('themes', {})
+                
+                logger.info("\n--- CONTENT THEMES ---")
+                logger.info(f"  Dominant: {', '.join(themes.get('dominant_themes', [])[:3])}")
+                logger.info(f"  Underexplored: {', '.join(themes.get('underexplored_themes', [])[:3])}")
+                
+                logger.info("\n--- AUDIENCE INSIGHTS ---")
+                audience = landscape.get('audience_insights', {})
+                logger.info(f"  Primary Stage: {audience.get('primary_audience_stage', 'Unknown')}")
+                logger.info(f"  Distribution: {audience.get('audience_distribution', {})}")
+                
+            logger.info("=" * 80)
+            
+            return 0
+        
         elif args.command == "migrate-data":
             # Migrate old data to new profile-specific storage
             old_events_file = Path(config.memory.directory) / "events.json"
@@ -608,7 +662,7 @@ Examples:
     
     parser.add_argument(
         "command",
-        choices=["start", "generate-once", "health-check", "import-history", "profile-stats", "migrate-data"],
+        choices=["start", "generate-once", "health-check", "import-history", "profile-stats", "analyze-content", "migrate-data"],
         help="Command to execute"
     )
     
