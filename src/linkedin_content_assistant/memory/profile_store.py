@@ -57,6 +57,14 @@ class ProfileMemoryStore:
         """Get last draft file path for a profile."""
         return self._get_profile_dir(profile_id) / "last_draft.json"
     
+    def _get_pending_drafts_file(self, profile_id: str) -> Path:
+        """Get pending drafts file path for a profile."""
+        return self._get_profile_dir(profile_id) / "pending_drafts.json"
+    
+    def _get_rejected_posts_file(self, profile_id: str) -> Path:
+        """Get rejected posts file path for a profile."""
+        return self._get_profile_dir(profile_id) / "rejected_posts.json"
+    
     # ========== Historical Posts ==========
     
     def store_historical_post(self, profile_id: str, post: Dict[str, Any]) -> None:
@@ -104,13 +112,20 @@ class ProfileMemoryStore:
         
         logger.info(f"Saved posted draft to history for {profile_id}")
     
-    def add_pending_draft(self, profile_id: str, post_content: str, hashtags: List[str]) -> None:
+    def add_pending_draft(
+        self,
+        profile_id: str,
+        post_content: str,
+        hashtags: List[str],
+        content_idea: Optional[Dict[str, Any]] = None
+    ) -> None:
         """Add a draft to the pending queue.
         
         Args:
             profile_id: Profile identifier
             post_content: The draft content
             hashtags: List of hashtags
+            content_idea: Optional content idea used to generate this draft (for regeneration)
         """
         drafts_file = self._get_pending_drafts_file(profile_id)
         
@@ -128,7 +143,8 @@ class ProfileMemoryStore:
         draft_data = {
             "content": post_content,
             "hashtags": hashtags,
-            "sent_at": datetime.utcnow().isoformat()
+            "sent_at": datetime.utcnow().isoformat(),
+            "content_idea": content_idea  # Store for regeneration
         }
         queue.append(draft_data)
         
@@ -172,6 +188,85 @@ class ProfileMemoryStore:
         logger.info(f"Popped draft from queue for {profile_id} (remaining: {len(queue)})")
         return draft
     
+    def peek_pending_draft(self, profile_id: str) -> Optional[Dict[str, Any]]:
+        """Get the oldest pending draft without removing it.
+        
+        Args:
+            profile_id: Profile identifier
+            
+        Returns:
+            Draft data or None if queue is empty
+        """
+        drafts_file = self._get_pending_drafts_file(profile_id)
+        
+        if not drafts_file.exists():
+            return None
+        
+        try:
+            with open(drafts_file, 'r') as f:
+                queue = json.load(f)
+        except (json.JSONDecodeError, IOError) as e:
+            logger.error(f"Failed to load pending drafts for {profile_id}: {e}")
+            return None
+        
+        if not queue:
+            return None
+        
+        # Return the oldest draft without removing it
+        return queue[0]
+    
+    def replace_pending_draft(
+        self,
+        profile_id: str,
+        new_content: str,
+        new_hashtags: List[str],
+        keep_content_idea: bool = True
+    ) -> bool:
+        """Replace the oldest pending draft with new content (for regeneration).
+        
+        Args:
+            profile_id: Profile identifier
+            new_content: New post content
+            new_hashtags: New hashtags
+            keep_content_idea: Whether to keep the original content_idea
+            
+        Returns:
+            True if replaced successfully, False if no draft to replace
+        """
+        drafts_file = self._get_pending_drafts_file(profile_id)
+        
+        if not drafts_file.exists():
+            return False
+        
+        try:
+            with open(drafts_file, 'r') as f:
+                queue = json.load(f)
+        except (json.JSONDecodeError, IOError) as e:
+            logger.error(f"Failed to load pending drafts for {profile_id}: {e}")
+            return False
+        
+        if not queue:
+            return False
+        
+        # Get the original content_idea if we want to keep it
+        original_idea = queue[0].get('content_idea') if keep_content_idea else None
+        
+        # Replace the oldest draft
+        queue[0] = {
+            "content": new_content,
+            "hashtags": new_hashtags,
+            "sent_at": datetime.utcnow().isoformat(),
+            "content_idea": original_idea,
+            "regenerated": True
+        }
+        
+        # Save updated queue
+        with open(drafts_file, 'w') as f:
+            json.dump(queue, f, indent=2)
+        
+        logger.info(f"Replaced oldest draft for {profile_id}")
+        return True
+    
     def get_pending_draft_count(self, profile_id: str) -> int:
         """Get the number of pending drafts.
         
@@ -192,6 +287,79 @@ class ProfileMemoryStore:
                 return len(queue)
         except (json.JSONDecodeError, IOError):
             return 0
+    
+    def save_rejected_post(
+        self,
+        profile_id: str,
+        post_content: str,
+        hashtags: List[str],
+        reason: Optional[str] = None,
+        content_idea: Optional[Dict[str, Any]] = None
+    ) -> None:
+        """Save a rejected draft for learning purposes.
+        
+        Args:
+            profile_id: Profile identifier
+            post_content: The rejected content
+            hashtags: List of hashtags
+            reason: Optional reason for rejection
+            content_idea: Optional content idea that was used
+        """
+        rejected_file = self._get_rejected_posts_file(profile_id)
+        
+        # Load existing rejected posts
+        if rejected_file.exists():
+            try:
+                with open(rejected_file, 'r') as f:
+                    rejected_posts = json.load(f)
+            except (json.JSONDecodeError, IOError):
+                rejected_posts = []
+        else:
+            rejected_posts = []
+        
+        # Add new rejected post
+        rejected_data = {
+            "content": post_content,
+            "hashtags": hashtags,
+            "rejected_at": datetime.utcnow().isoformat(),
+            "reason": reason,
+            "content_idea": content_idea
+        }
+        rejected_posts.append(rejected_data)
+        
+        # Keep only last 20 rejected posts
+        if len(rejected_posts) > 20:
+            rejected_posts = rejected_posts[-20:]
+        
+        # Save
+        with open(rejected_file, 'w') as f:
+            json.dump(rejected_posts, f, indent=2)
+        
+        logger.info(f"Saved rejected post for {profile_id} (total: {len(rejected_posts)})")
+    
+    def get_rejected_posts(self, profile_id: str, limit: int = 10) -> List[Dict[str, Any]]:
+        """Get recent rejected posts for learning.
+        
+        Args:
+            profile_id: Profile identifier
+            limit: Maximum number of rejected posts to return
+            
+        Returns:
+            List of rejected post dictionaries
+        """
+        rejected_file = self._get_rejected_posts_file(profile_id)
+        
+        if not rejected_file.exists():
+            return []
+        
+        try:
+            with open(rejected_file, 'r') as f:
+                rejected_posts = json.load(f)
+                # Return most recent first
+                return rejected_posts[-limit:] if len(rejected_posts) > limit else rejected_posts
+        except (json.JSONDecodeError, IOError) as e:
+            logger.error(f"Failed to load rejected posts for {profile_id}: {e}")
+            return []
     
     def get_historical_posts(
         self,

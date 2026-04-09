@@ -319,7 +319,8 @@ class TelegramBot:
         # Instructions section
         message += "\n💡 <b>Actions:</b>\n"
         message += "• Reply /posted after posting to LinkedIn\n"
-        message += "• Reply /skip to skip this draft"
+        message += "• Reply /skip [reason] to reject this draft\n"
+        message += "• Reply /regenerate to get a new version (coming soon)"
         
         return message
     
@@ -441,6 +442,16 @@ class TelegramBot:
                 username=user.get("username", "Unknown"),
                 timestamp=datetime.utcnow().isoformat(),
                 reason=reason
+            )
+        
+        # Handle /regenerate command
+        elif text == "/regenerate":
+            return FeedbackData(
+                approval_id="",
+                action="regenerate",
+                user_id=str(user.get("id", "")),
+                username=user.get("username", "Unknown"),
+                timestamp=datetime.utcnow().isoformat()
             )
         
         return None

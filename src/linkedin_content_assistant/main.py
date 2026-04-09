@@ -765,7 +765,7 @@ async def async_main(args: argparse.Namespace) -> int:
                 return 1
             
             # Verify profile exists
-            profile = profile_manager.get_profile(args.profile)
+            profile = profile_manager.load_profile(args.profile)
             if not profile:
                 logger.error(f"Profile '{args.profile}' not found")
                 return 1
@@ -787,7 +787,7 @@ async def async_main(args: argparse.Namespace) -> int:
                 
                 # Define callback for handling feedback
                 async def handle_feedback(feedback, last_draft):
-                    """Handle /posted or /skip feedback."""
+                    """Handle /posted, /skip, or /regenerate feedback."""
                     if feedback.action == "posted":
                         # Pop the oldest draft from the queue
                         draft = profile_store.pop_pending_draft(args.profile)
@@ -814,20 +814,135 @@ async def async_main(args: argparse.Namespace) -> int:
                         )
                     
                     elif feedback.action == "skipped":
-                        # Pop and discard the oldest draft
+                        # Pop the oldest draft and save to rejected posts
                         draft = profile_store.pop_pending_draft(args.profile)
                         
                         if draft:
                             reason = feedback.reason or "No reason provided"
+                            
+                            # Save to rejected posts for learning
+                            profile_store.save_rejected_post(
+                                args.profile,
+                                draft["content"],
+                                draft["hashtags"],
+                                reason=reason
+                            )
+                            
                             remaining = profile_store.get_pending_draft_count(args.profile)
-                            logger.info(f"Post skipped: {reason} ({remaining} pending)")
+                            logger.info(f"Post skipped and saved to rejected: {reason} ({remaining} pending)")
                             await telegram_bot.send_alert(
-                                f"Post skipped: {reason}\n"
+                                f"✓ Post skipped and saved for learning\n"
+                                f"Reason: {reason}\n"
                                 f"Pending drafts: {remaining}"
                             )
                         else:
                             logger.warning("No pending drafts to skip")
                             await telegram_bot.send_alert("⚠️ No pending drafts to skip")
+                    
+                    elif feedback.action == "regenerate":
+                        # Peek at the oldest draft to get the content_idea
+                        draft = profile_store.peek_pending_draft(args.profile)
+                        
+                        if not draft:
+                            logger.warning("No pending drafts to regenerate")
+                            await telegram_bot.send_alert("⚠️ No pending drafts to regenerate")
+                            return
+                        
+                        content_idea = draft.get('content_idea')
+                        
+                        if not content_idea:
+                            logger.warning("Draft has no content_idea - cannot regenerate")
+                            await telegram_bot.send_alert(
+                                "⚠️ Cannot regenerate: draft missing content idea\n"
+                                "This feature works only for newly generated posts."
+                            )
+                            return
+                        
+                        logger.info("Regenerating post with same content idea...")
+                        await telegram_bot.send_alert("🔄 Regenerating post... please wait")
+                        
+                        try:
+                            # Regenerate the post using the same content_idea
+                            # Load profile and create context
+                            profile = profile_manager.load_profile(args.profile)
+                            if not profile:
+                                await telegram_bot.send_alert("⚠️ Profile not found")
+                                return
+                            
+                            from linkedin_content_assistant.agents.base import ProfileContext
+                            context = ProfileContext(
+                                profile_id=profile.profile_id,
+                                identity=profile.identity.model_dump(),
+                                behavior=profile.behavior.model_dump(),
+                                version=profile.version,
+                                last_updated=profile.last_updated
+                            )
+                            
+                            # Use drafting agent to regenerate
+                            from linkedin_content_assistant.llm.factory import LLMFactory
+                            from linkedin_content_assistant.llm.config import LLMConfig, ProviderConfig
+                            from linkedin_content_assistant.llm.base import LLMProvider
+                            import os
+                            
+                            # Create LLM factory (simplified - reuse from orchestrator would be better)
+                            aws_region = os.getenv('AWS_REGION', 'us-east-1')
+                            primary_provider = ProviderConfig(
+                                provider=LLMProvider.BEDROCK_CLAUDE,
+                                model="us.anthropic.claude-sonnet-4-5-20250929-v1:0",
+                                region=aws_region,
+                                max_tokens=2000,
+                                temperature=0.8,
+                                timeout=60,
+                                retry_attempts=3,
+                                retry_delay=5
+                            )
+                            llm_config = LLMConfig(
+                                primary_provider=primary_provider,
+                                fallback_providers=[],
+                                enable_fallback=False
+                            )
+                            llm_factory = LLMFactory(llm_config)
+                            
+                            from linkedin_content_assistant.agents.drafting import DraftingAgent
+                            drafting_agent = DraftingAgent(llm_factory)
+                            
+                            # Generate new draft with same content_idea
+                            drafting_output = await drafting_agent.execute(
+                                context,
+                                profile_store,
+                                content_idea
+                            )
+                            
+                            # Extract new post
+                            linkedin_post_dict = drafting_output.content.get("linkedin_post", {})
+                            from linkedin_content_assistant.agents.drafting import LinkedInPost
+                            new_post = LinkedInPost(
+                                content=linkedin_post_dict.get('content', ''),
+                                hashtags=linkedin_post_dict.get('hashtags', []),
+                                call_to_action=linkedin_post_dict.get('call_to_action'),
+                                estimated_length=linkedin_post_dict.get('estimated_length', 0),
+                                tone_analysis=linkedin_post_dict.get('tone_analysis', {}),
+                                formatting_notes=linkedin_post_dict.get('formatting_notes', []),
+                                article_reference=linkedin_post_dict.get('article_reference')
+                            )
+                            
+                            # Replace the pending draft
+                            profile_store.replace_pending_draft(
+                                args.profile,
+                                new_post.content,
+                                new_post.hashtags,
+                                keep_content_idea=True
+                            )
+                            
+                            # Send new draft to Telegram
+                            await telegram_bot.send_post_draft(new_post, args.profile)
+                            
+                            logger.info("✓ Post regenerated successfully")
+                            await telegram_bot.send_alert("✓ New version generated!")
+                            
+                        except Exception as e:
+                            logger.error(f"Regeneration failed: {e}", exc_info=True)
+                            await telegram_bot.send_alert(f"⚠️ Regeneration failed: {str(e)}")
                 
                 # Start polling
                 await telegram_bot.start_polling(handle_feedback)

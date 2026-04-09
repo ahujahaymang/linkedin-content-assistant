@@ -333,11 +333,21 @@ class ContentOrchestrator:
                 logger.info(f"Successfully delivered post to Telegram for profile: {profile_id}")
                 await self._store_delivery_event(profile_id, post, "delivered", None)
                 
-                # Add draft to pending queue for /posted command
+                # Add draft to pending queue for /posted command (with content_idea for regeneration)
+                content_idea = {
+                    "angle": trending_article.get('suggested_angle', '') if trending_article else '',
+                    "hook": '',  # Not stored separately
+                    "target_audience": '',  # From profile
+                    "content_theme": trending_article.get('article', {}).get('title', '') if trending_article else '',
+                    "estimated_engagement": '',
+                    "article_reference": trending_article.get('article') if trending_article else None
+                }
+                
                 self.profile_store.add_pending_draft(
                     profile_id,
                     post.content,
-                    post.hashtags
+                    post.hashtags,
+                    content_idea=content_idea
                 )
             else:
                 logger.warning(f"Failed to deliver post to Telegram for profile: {profile_id}")

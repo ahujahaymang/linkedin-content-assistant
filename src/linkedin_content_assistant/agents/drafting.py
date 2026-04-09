@@ -122,11 +122,14 @@ class DraftingAgent(StatelessAgentMixin, LinkedInAgent):
             # Get content intelligence for strategic direction
             content_intelligence = self._get_content_intelligence(memory, context.profile_id)
             
+            # Get rejected posts to learn what to avoid
+            rejected_posts = self._get_rejected_posts(memory, context.profile_id, limit=5)
+            
             # Build system prompt for drafting
             system_prompt = self._build_system_prompt(context, style_analysis, content_intelligence)
             
             # Build user prompt with content idea and constraints
-            user_prompt = self._build_user_prompt(idea, context, recent_posts, historical_posts)
+            user_prompt = self._build_user_prompt(idea, context, recent_posts, historical_posts, rejected_posts)
             
             # Generate LinkedIn post using LLM
             response = await self.llm_factory.generate_with_system(
@@ -152,6 +155,7 @@ class DraftingAgent(StatelessAgentMixin, LinkedInAgent):
                     "target_audience": idea.target_audience,
                     "recent_posts_count": len(recent_posts),
                     "historical_posts_used": len(historical_posts),
+                    "rejected_posts_used": len(rejected_posts),
                     "style_analysis_available": style_analysis is not None,
                     "content_intelligence_available": content_intelligence is not None
                 },
@@ -331,6 +335,30 @@ class DraftingAgent(StatelessAgentMixin, LinkedInAgent):
             logger.warning(f"Failed to retrieve content intelligence: {e}")
             return None
     
+    def _get_rejected_posts(self, memory: Any, profile_id: str, limit: int = 5) -> List[Dict[str, Any]]:
+        """Get rejected posts for learning what to avoid.
+        
+        Args:
+            memory: ProfileMemoryStore instance
+            profile_id: Profile identifier
+            limit: Maximum number of rejected posts to retrieve
+            
+        Returns:
+            List of rejected post dictionaries
+        """
+        try:
+            if hasattr(memory, 'get_rejected_posts'):
+                rejected = memory.get_rejected_posts(profile_id, limit=limit)
+                if rejected:
+                    logger.info(f"Retrieved {len(rejected)} rejected posts for {profile_id}")
+                return rejected
+            else:
+                logger.warning("Memory store does not support get_rejected_posts")
+                return []
+        except Exception as e:
+            logger.warning(f"Failed to retrieve rejected posts: {e}")
+            return []
+    
     def _build_system_prompt(self, context: ProfileContext, style_analysis: Optional[Dict[str, Any]] = None, content_intelligence: Optional[Dict[str, Any]] = None) -> str:
         """Build system prompt for post drafting."""
         identity = context.identity
@@ -438,7 +466,7 @@ LINKEDIN POST REQUIREMENTS:
 3. Use appropriate formatting (line breaks, bullet points if needed)
 4. Include relevant hashtags (3-5 maximum)
 5. End with a call-to-action or engaging question
-6. Stay within 1300 characters for optimal engagement
+6. ⚠️ CRITICAL: Post content MUST be 800-1300 characters (HARD LIMIT - count carefully!)
 7. Maintain professional tone while being personable
 8. Avoid generic corporate speak
 9. Include personal insights or experiences when appropriate
@@ -480,7 +508,7 @@ CRITICAL: The post content must be copy-paste ready for LinkedIn. Do NOT use mar
         
         return prompt
     
-    def _build_user_prompt(self, idea: ContentIdea, context: ProfileContext, recent_posts: List[Dict[str, Any]], historical_posts: List[Dict[str, Any]]) -> str:
+    def _build_user_prompt(self, idea: ContentIdea, context: ProfileContext, recent_posts: List[Dict[str, Any]], historical_posts: List[Dict[str, Any]], rejected_posts: List[Dict[str, Any]] = None) -> str:
         """Build user prompt with content idea and constraints."""
         prompt = f"""Convert this content idea into a LinkedIn post:
 
@@ -553,6 +581,22 @@ CONTENT IDEA:
                 for i, theme in enumerate(recent_themes, 1):
                     prompt += f"{i}. {theme}\n"
         
+        # Add rejected posts as negative examples
+        if rejected_posts:
+            prompt += f"\n\nREJECTED POSTS (learn what NOT to do - avoid these angles/styles):\n"
+            for i, rejected in enumerate(rejected_posts, 1):
+                content = rejected.get('content', '')
+                reason = rejected.get('reason', 'No reason provided')
+                
+                # Show first 150 chars of rejected content
+                content_preview = content[:150] + "..." if len(content) > 150 else content
+                
+                prompt += f"\nRejected Post {i}:\n"
+                prompt += f"Content: {content_preview}\n"
+                prompt += f"Reason for rejection: {reason}\n"
+            
+            prompt += f"\n⚠️ CRITICAL: Avoid the angles, topics, and styles from rejected posts above.\n"
+        
         prompt += f"""
 
 CRITICAL REQUIREMENTS:
@@ -567,10 +611,18 @@ CRITICAL REQUIREMENTS:
 9. Include actionable insights or thought-provoking questions
 10. Make it engaging for {idea.estimated_engagement} type of interaction
 
+CHARACTER LIMIT ENFORCEMENT:
+⚠️ CRITICAL: The post content MUST be between 800-1300 characters (optimal for LinkedIn engagement)
+- Count characters carefully before finalizing
+- If approaching 1300, trim unnecessary words
+- DO NOT exceed 1300 characters under any circumstances
+- This is a HARD LIMIT - posts over 1300 characters will be rejected
+
 CONTENT FRESHNESS CHECK:
 - Does this post cover a topic NOT in the historical posts? ✓
 - Does this post add new value beyond what's been shared before? ✓
 - Does this post have a unique angle or fresh perspective? ✓
+- Does this post avoid the angles/styles from rejected posts? ✓
 
 Return only the JSON response with no additional text."""
         
@@ -711,11 +763,11 @@ Return only the JSON response with no additional text."""
                 if not isinstance(hashtag, str) or not hashtag.startswith('#'):
                     errors.append(f"Invalid hashtag format: {hashtag}")
         
-        # Validate estimated length
+        # Validate estimated length (relaxed - allow larger difference)
         estimated_length = post.get("estimated_length", 0)
         actual_length = len(content)
-        # Relaxed validation - allow up to 300 character difference
-        if abs(estimated_length - actual_length) > 300:
+        # Very relaxed validation - only flag if difference is extreme (>500 chars)
+        if abs(estimated_length - actual_length) > 500:
             errors.append(f"Estimated length ({estimated_length}) differs significantly from actual length ({actual_length})")
         
         return errors
