@@ -666,6 +666,77 @@ async def async_main(args: argparse.Namespace) -> int:
             shutil.move(str(old_events_file), str(old_events_file) + ".backup")
             
             return 0
+        
+        elif args.command == "listen":
+            # Listen for Telegram /posted commands
+            if not args.profile:
+                logger.error("--profile is required for listen command")
+                return 1
+            
+            # Verify profile exists
+            profile = profile_manager.get_profile(args.profile)
+            if not profile:
+                logger.error(f"Profile '{args.profile}' not found")
+                return 1
+            
+            # Initialize Telegram bot
+            from linkedin_content_assistant.delivery.telegram_bot import TelegramBot
+            telegram_bot = TelegramBot(config.telegram)
+            
+            try:
+                # Connect to Telegram
+                await telegram_bot.connect()
+                
+                logger.info("=" * 80)
+                logger.info(f"Listening for Telegram commands for profile: {args.profile}")
+                logger.info("=" * 80)
+                logger.info("Waiting for /posted or /skip commands...")
+                logger.info("Press Ctrl+C to stop")
+                logger.info("=" * 80)
+                
+                # Define callback for handling feedback
+                async def handle_feedback(feedback, last_draft):
+                    """Handle /posted or /skip feedback."""
+                    # Get the actual last draft from profile store
+                    draft = profile_store.get_last_draft(args.profile)
+                    
+                    if not draft:
+                        logger.warning("No draft found - generate a post first")
+                        await telegram_bot.send_alert("⚠️ No draft found. Generate a post first with generate-once command.")
+                        return
+                    
+                    if feedback.action == "posted":
+                        # Save to history
+                        profile_store.save_posted_draft(
+                            args.profile,
+                            draft["content"],
+                            draft["hashtags"]
+                        )
+                        
+                        logger.info(f"✓ Post saved to history for {args.profile}")
+                        await telegram_bot.send_alert(
+                            f"✓ Post saved to your history!\n\n"
+                            f"Total posts: {profile_store.get_post_count(args.profile)}"
+                        )
+                    
+                    elif feedback.action == "skipped":
+                        reason = feedback.reason or "No reason provided"
+                        logger.info(f"Post skipped: {reason}")
+                        
+                        # Clear the draft
+                        profile_store.clear_last_draft(args.profile)
+                        await telegram_bot.send_alert(f"Post skipped: {reason}")
+                
+                # Start polling
+                await telegram_bot.start_polling(handle_feedback)
+                
+            except KeyboardInterrupt:
+                logger.info("\nStopping listener...")
+                telegram_bot.stop_polling()
+            finally:
+                await telegram_bot.disconnect()
+            
+            return 0
             
         else:
             logger.error(f"Unknown command: {args.command}")
@@ -702,6 +773,7 @@ Commands:
   generate-once    Generate a single post for testing (requires --profile)
   health-check     Check health of all components
   import-history   Import historical LinkedIn posts (requires --profile and --file)
+  listen           Listen for Telegram /posted commands and save to history (requires --profile)
 
 Examples:
   # Start the application
@@ -719,6 +791,9 @@ Examples:
   # View profile statistics
   python3 -m linkedin_content_assistant.main profile-stats --profile my-profile
   
+  # Listen for /posted commands
+  python3 -m linkedin_content_assistant.main listen --profile my-profile
+  
   # Migrate old data to new profile-specific storage
   python3 -m linkedin_content_assistant.main migrate-data
 
@@ -729,7 +804,7 @@ Examples:
     
     parser.add_argument(
         "command",
-        choices=["start", "generate-once", "health-check", "import-history", "profile-stats", "analyze-content", "migrate-data"],
+        choices=["start", "generate-once", "health-check", "import-history", "profile-stats", "analyze-content", "migrate-data", "listen"],
         help="Command to execute"
     )
     

@@ -53,6 +53,10 @@ class ProfileMemoryStore:
         """Get content intelligence file path for a profile."""
         return self._get_profile_dir(profile_id) / "content_intelligence.json"
     
+    def _get_last_draft_file(self, profile_id: str) -> Path:
+        """Get last draft file path for a profile."""
+        return self._get_profile_dir(profile_id) / "last_draft.json"
+    
     # ========== Historical Posts ==========
     
     def store_historical_post(self, profile_id: str, post: Dict[str, Any]) -> None:
@@ -75,6 +79,87 @@ class ProfileMemoryStore:
             json.dump(posts, f, indent=2)
         
         logger.debug(f"Stored historical post for {profile_id}")
+    
+    def save_posted_draft(self, profile_id: str, post_content: str, hashtags: List[str]) -> None:
+        """Save a draft that was posted to LinkedIn.
+        
+        Args:
+            profile_id: Profile identifier
+            post_content: The posted content
+            hashtags: List of hashtags used
+        """
+        # Create post data in the same format as imported posts
+        post_data = {
+            "content": post_content,
+            "metadata": {
+                "type": "post",
+                "posted_at": datetime.utcnow().isoformat(),
+                "source": "telegram_posted",
+                "hashtags": hashtags
+            }
+        }
+        
+        # Store as historical post
+        self.store_historical_post(profile_id, post_data)
+        
+        # Clear the last draft
+        self.clear_last_draft(profile_id)
+        
+        logger.info(f"Saved posted draft to history for {profile_id}")
+    
+    def save_last_draft(self, profile_id: str, post_content: str, hashtags: List[str]) -> None:
+        """Save the last sent draft for /posted command.
+        
+        Args:
+            profile_id: Profile identifier
+            post_content: The draft content
+            hashtags: List of hashtags
+        """
+        draft_file = self._get_last_draft_file(profile_id)
+        
+        draft_data = {
+            "content": post_content,
+            "hashtags": hashtags,
+            "sent_at": datetime.utcnow().isoformat()
+        }
+        
+        with open(draft_file, 'w') as f:
+            json.dump(draft_data, f, indent=2)
+        
+        logger.debug(f"Saved last draft for {profile_id}")
+    
+    def get_last_draft(self, profile_id: str) -> Optional[Dict[str, Any]]:
+        """Get the last sent draft.
+        
+        Args:
+            profile_id: Profile identifier
+            
+        Returns:
+            Draft data or None
+        """
+        draft_file = self._get_last_draft_file(profile_id)
+        
+        if not draft_file.exists():
+            return None
+        
+        try:
+            with open(draft_file, 'r') as f:
+                return json.load(f)
+        except (json.JSONDecodeError, IOError) as e:
+            logger.error(f"Failed to load last draft for {profile_id}: {e}")
+            return None
+    
+    def clear_last_draft(self, profile_id: str) -> None:
+        """Clear the last draft file.
+        
+        Args:
+            profile_id: Profile identifier
+        """
+        draft_file = self._get_last_draft_file(profile_id)
+        
+        if draft_file.exists():
+            draft_file.unlink()
+            logger.debug(f"Cleared last draft for {profile_id}")
     
     def get_historical_posts(
         self,

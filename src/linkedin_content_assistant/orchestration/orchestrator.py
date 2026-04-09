@@ -319,6 +319,13 @@ class ContentOrchestrator:
             if success:
                 logger.info(f"Successfully delivered post to Telegram for profile: {profile_id}")
                 await self._store_delivery_event(profile_id, post, "delivered", None)
+                
+                # Save draft for /posted command
+                self.profile_store.save_last_draft(
+                    profile_id,
+                    post.content,
+                    post.hashtags
+                )
             else:
                 logger.warning(f"Failed to deliver post to Telegram for profile: {profile_id}")
                 await self._store_delivery_event(profile_id, post, "failed", "Delivery returned False")

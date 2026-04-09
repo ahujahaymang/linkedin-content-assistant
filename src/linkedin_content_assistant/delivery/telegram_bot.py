@@ -50,6 +50,11 @@ class TelegramBot:
         self._connected = False
         self.logger = logging.getLogger(__name__)
         self._validate_config()
+        
+        # Track last sent draft for /posted command
+        self._last_draft: Optional[Dict[str, Any]] = None
+        self._update_offset: int = 0
+        self._polling = False
     
     def _validate_config(self) -> None:
         """Validate Telegram configuration."""
@@ -159,6 +164,13 @@ class TelegramBot:
             
             if success2:
                 self.logger.info(f"Sent post draft for profile {profile_id}")
+                
+                # Store the draft for /posted command
+                self._last_draft = {
+                    "post": post,
+                    "profile_id": profile_id,
+                    "timestamp": datetime.utcnow().isoformat()
+                }
             else:
                 self.logger.warning(f"Post sent but metadata failed for profile {profile_id}")
             
@@ -403,3 +415,83 @@ class TelegramBot:
                 health["api_test"] = f"failed: {e}"
         
         return health
+    
+    async def start_polling(self, callback) -> None:
+        """
+        Start polling for Telegram updates.
+        
+        Args:
+            callback: Async function to call with (feedback_data, last_draft)
+                     when /posted or /skip is received
+        """
+        if not self.is_connected:
+            raise RuntimeError("Telegram bot not connected")
+        
+        self._polling = True
+        self.logger.info("Started polling for Telegram updates")
+        
+        while self._polling:
+            try:
+                updates = await self._get_updates()
+                
+                for update in updates:
+                    # Update offset for next poll
+                    self._update_offset = update.get("update_id", 0) + 1
+                    
+                    # Handle the update
+                    feedback = await self.handle_user_feedback(update)
+                    
+                    if feedback and self._last_draft:
+                        # Call the callback with feedback and draft
+                        await callback(feedback, self._last_draft)
+                        
+                        # Clear the draft after processing
+                        if feedback.action == "posted":
+                            self._last_draft = None
+                
+                # Sleep briefly between polls
+                await asyncio.sleep(1)
+                
+            except Exception as e:
+                self.logger.error(f"Error during polling: {e}")
+                await asyncio.sleep(5)
+    
+    def stop_polling(self) -> None:
+        """Stop polling for updates."""
+        self._polling = False
+        self.logger.info("Stopped polling for Telegram updates")
+    
+    async def _get_updates(self) -> list:
+        """
+        Get updates from Telegram API.
+        
+        Returns:
+            List of updates
+        """
+        url = f"https://api.telegram.org/bot{self.config.bot_token}/getUpdates"
+        
+        params = {
+            "offset": self._update_offset,
+            "timeout": 30,
+            "allowed_updates": ["message"]
+        }
+        
+        try:
+            async with self.session.get(url, params=params) as response:
+                if response.status == 200:
+                    data = await response.json()
+                    if data.get('ok'):
+                        return data.get('result', [])
+                    else:
+                        self.logger.error(f"Telegram API error: {data.get('description')}")
+                        return []
+                else:
+                    self.logger.error(f"HTTP error {response.status} getting updates")
+                    return []
+        except Exception as e:
+            self.logger.error(f"Error getting updates: {e}")
+            return []
+    
+    def get_last_draft(self) -> Optional[Dict[str, Any]]:
+        """Get the last sent draft."""
+        return self._last_draft
