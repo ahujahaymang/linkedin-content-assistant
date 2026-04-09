@@ -1,0 +1,284 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>LinkedIn Newsletter Extractor</title>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            max-width: 800px;
+            margin: 50px auto;
+            padding: 20px;
+            background: #f3f2ef;
+        }
+        .container {
+            background: white;
+            padding: 30px;
+            border-radius: 8px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+        }
+        h1 {
+            color: #0a66c2;
+            margin-bottom: 10px;
+        }
+        .instructions {
+            background: #f0f7ff;
+            padding: 15px;
+            border-radius: 4px;
+            margin: 20px 0;
+            border-left: 4px solid #0a66c2;
+        }
+        button {
+            background: #0a66c2;
+            color: white;
+            border: none;
+            padding: 12px 24px;
+            border-radius: 24px;
+            font-size: 16px;
+            font-weight: 600;
+            cursor: pointer;
+            margin: 10px 5px;
+        }
+        button:hover {
+            background: #004182;
+        }
+        .status {
+            margin: 20px 0;
+            padding: 15px;
+            border-radius: 4px;
+            display: none;
+        }
+        .status.success {
+            background: #d4edda;
+            border-left: 4px solid #28a745;
+            display: block;
+        }
+        code {
+            background: #f5f5f5;
+            padding: 2px 6px;
+            border-radius: 3px;
+            font-family: 'Courier New', monospace;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>📰 LinkedIn Newsletter Extractor</h1>
+        <p>Extract articles from your LinkedIn newsletter page</p>
+
+        <div class="instructions">
+            <strong>📋 Instructions:</strong>
+            <ol>
+                <li>Go to your newsletter page: <code>https://www.linkedin.com/newsletters/YOUR-NEWSLETTER-NAME/</code></li>
+                <li>Make sure you can see the list of articles</li>
+                <li>Open browser console (F12 or Cmd+Option+J)</li>
+                <li>Click "Copy Newsletter Script" below</li>
+                <li>Paste in console and press Enter</li>
+                <li>The script will scroll and extract all articles</li>
+            </ol>
+        </div>
+
+        <button onclick="copyScript()">📋 Copy Newsletter Script</button>
+
+        <div id="status" class="status"></div>
+    </div>
+
+    <script>
+        const extractionScript = `
+(async function() {
+    console.clear();
+    console.log('═══════════════════════════════════════════════════════════');
+    console.log('📰 LinkedIn Newsletter Extractor Started');
+    console.log('═══════════════════════════════════════════════════════════');
+    console.log('⚠️  Ignore any extension errors - they are harmless');
+    console.log('');
+    
+    const articles = [];
+    const seenArticles = new Set();
+    let scrollAttempts = 0;
+    const maxScrollAttempts = 30;
+    let lastArticleCount = 0;
+    
+    // Extract newsletter articles
+    while (scrollAttempts < maxScrollAttempts) {
+        // Find article elements - newsletter uses feed-shared-update-v2
+        const articleElements = document.querySelectorAll('.feed-shared-update-v2[data-urn]');
+        
+        // Extract data from each article
+        articleElements.forEach(element => {
+            try {
+                // Find the article link to get title
+                const linkElement = element.querySelector('a[href*="/pulse/"]');
+                if (!linkElement) return;
+                
+                const link = linkElement.href;
+                
+                // Extract title from link text or nearby heading
+                let title = linkElement.innerText?.trim() || '';
+                
+                // If link has no text, try to find title in article element
+                if (!title || title.length < 10) {
+                    const articleElement = element.querySelector('article');
+                    if (articleElement) {
+                        // Get all text from article, split by newlines, find the title
+                        const lines = articleElement.innerText?.split('\\n').filter(l => l.trim());
+                        // Title is usually one of the longer lines
+                        title = lines?.find(l => l.length > 20 && l.length < 200) || '';
+                    }
+                }
+                
+                // Extract full content from the article element
+                const articleElement = element.querySelector('article') || element;
+                const fullText = articleElement.innerText?.trim() || '';
+                
+                // Extract description (everything after title)
+                let description = '';
+                if (fullText && title) {
+                    const titleIndex = fullText.indexOf(title);
+                    if (titleIndex >= 0) {
+                        description = fullText.substring(titleIndex + title.length).trim();
+                        // Clean up - remove "Haymang Ahuja" author line and other metadata
+                        description = description.split('\\n').filter(line => {
+                            const l = line.trim();
+                            return l.length > 0 && 
+                                   !l.includes('Haymang Ahuja') &&
+                                   !l.startsWith('Published') &&
+                                   !l.includes('Feed post');
+                        }).join('\\n').trim();
+                    }
+                }
+                
+                // Extract timestamp
+                const timeElement = element.querySelector('time');
+                const timestamp = timeElement?.getAttribute('datetime') || '';
+                
+                // Extract engagement
+                const likesElement = element.querySelector('.social-details-social-counts__reactions-count');
+                const commentsElement = element.querySelector('.social-details-social-counts__comments');
+                
+                const engagement = {
+                    likes: likesElement?.innerText?.trim() || '0',
+                    comments: commentsElement?.innerText?.trim().replace(/\\D/g, '') || '0',
+                    shares: '0'
+                };
+                
+                // Create article object
+                if (title && title.length > 10 && !seenArticles.has(link)) {
+                    const fullContent = title + (description ? '\\n\\n' + description : '');
+                    
+                    articles.push({
+                        content: fullContent,
+                        timestamp: timestamp,
+                        engagement: engagement,
+                        hashtags: [],
+                        length: fullContent.length,
+                        metadata: {
+                            type: 'article',
+                            has_image: !!element.querySelector('img'),
+                            has_video: false,
+                            has_document: false,
+                            article_title: title,
+                            article_link: link
+                        }
+                    });
+                    
+                    seenArticles.add(link);
+                    console.log(\`  ✓ Extracted: \${title.substring(0, 60)}...\`);
+                }
+            } catch (e) {
+                console.error('Error extracting article:', e);
+            }
+        });
+        
+        // Show progress
+        if (articles.length > lastArticleCount) {
+            const newArticles = articles.length - lastArticleCount;
+            console.log(\`📰 Scroll \${scrollAttempts + 1}: Found \${newArticles} new article(s) | Total: \${articles.length}\`);
+            lastArticleCount = articles.length;
+        } else {
+            console.log(\`⏳ Scroll \${scrollAttempts + 1}: No new articles found | Total: \${articles.length}\`);
+        }
+        
+        // Scroll down
+        window.scrollTo(0, document.body.scrollHeight);
+        await new Promise(resolve => setTimeout(resolve, 2000));
+        
+        scrollAttempts++;
+        
+        // Check if we've reached the end
+        const currentHeight = document.body.scrollHeight;
+        await new Promise(resolve => setTimeout(resolve, 1000));
+        if (currentHeight === document.body.scrollHeight && scrollAttempts > 5) {
+            console.log('');
+            console.log('✅ Reached end of newsletter - no more articles to load');
+            break;
+        }
+    }
+    
+    console.log('');
+    console.log('═══════════════════════════════════════════════════════════');
+    console.log('✅ EXTRACTION COMPLETE!');
+    console.log('═══════════════════════════════════════════════════════════');
+    console.log(\`📰 Total articles collected: \${articles.length}\`);
+    console.log('');
+    
+    if (articles.length === 0) {
+        console.log('⚠️  No articles found. Make sure you are on the newsletter page.');
+        console.log('   URL should look like: /newsletters/YOUR-NEWSLETTER-NAME/');
+        return;
+    }
+    
+    // Prepare data for export
+    const exportData = {
+        profile_id: "haymang",
+        extraction_date: new Date().toISOString(),
+        total_posts: articles.length,
+        summary: {
+            articles: articles.length,
+            posts: 0,
+            reposts: 0,
+            with_images: articles.filter(a => a.metadata.has_image).length,
+            with_videos: 0
+        },
+        posts: articles
+    };
+    
+    // Download as JSON
+    const blob = new Blob([JSON.stringify(exportData, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = \`linkedin_newsletter_\${new Date().toISOString().split('T')[0]}.json\`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+    
+    console.log('💾 File downloaded: ' + a.download);
+    console.log('');
+    console.log('📁 Next step - Import this file using:');
+    console.log('   python3 -m linkedin_content_assistant.main import-history --profile haymang --file ' + a.download);
+    console.log('');
+    console.log('═══════════════════════════════════════════════════════════');
+    
+    return exportData;
+})();
+`;
+
+        function copyScript() {
+            navigator.clipboard.writeText(extractionScript).then(() => {
+                showStatus('✅ Script copied! Now paste it in the console on your newsletter page.');
+            }).catch(err => {
+                showStatus('❌ Failed to copy. Please try again.');
+            });
+        }
+
+        function showStatus(message) {
+            const statusDiv = document.getElementById('status');
+            statusDiv.textContent = message;
+            statusDiv.className = 'status success';
+        }
+    </script>
+</body>
+</html>

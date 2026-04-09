@@ -50,6 +50,7 @@ logs/
 
 # Data (keep structure, ignore content)
 data/memory/*.json
+data/memory/*/*.json
 data/memory/*.db
 !data/memory/.gitkeep
 

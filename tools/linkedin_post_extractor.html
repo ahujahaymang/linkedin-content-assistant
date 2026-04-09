@@ -1,0 +1,439 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>LinkedIn Post Extractor</title>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            max-width: 800px;
+            margin: 50px auto;
+            padding: 20px;
+            background: #f3f2ef;
+        }
+        .container {
+            background: white;
+            padding: 30px;
+            border-radius: 8px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+        }
+        h1 {
+            color: #0a66c2;
+            margin-bottom: 10px;
+        }
+        .instructions {
+            background: #f0f7ff;
+            padding: 15px;
+            border-radius: 4px;
+            margin: 20px 0;
+            border-left: 4px solid #0a66c2;
+        }
+        .instructions ol {
+            margin: 10px 0;
+            padding-left: 20px;
+        }
+        .instructions li {
+            margin: 8px 0;
+        }
+        button {
+            background: #0a66c2;
+            color: white;
+            border: none;
+            padding: 12px 24px;
+            border-radius: 24px;
+            font-size: 16px;
+            font-weight: 600;
+            cursor: pointer;
+            margin: 10px 5px;
+        }
+        button:hover {
+            background: #004182;
+        }
+        button:disabled {
+            background: #ccc;
+            cursor: not-allowed;
+        }
+        .status {
+            margin: 20px 0;
+            padding: 15px;
+            border-radius: 4px;
+            display: none;
+        }
+        .status.info {
+            background: #e7f3ff;
+            border-left: 4px solid #0a66c2;
+            display: block;
+        }
+        .status.success {
+            background: #d4edda;
+            border-left: 4px solid #28a745;
+            display: block;
+        }
+        .status.error {
+            background: #f8d7da;
+            border-left: 4px solid #dc3545;
+            display: block;
+        }
+        .progress {
+            margin: 20px 0;
+        }
+        .progress-bar {
+            width: 100%;
+            height: 30px;
+            background: #e0e0e0;
+            border-radius: 15px;
+            overflow: hidden;
+        }
+        .progress-fill {
+            height: 100%;
+            background: #0a66c2;
+            width: 0%;
+            transition: width 0.3s;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: white;
+            font-weight: 600;
+        }
+        .warning {
+            background: #fff3cd;
+            padding: 15px;
+            border-radius: 4px;
+            margin: 20px 0;
+            border-left: 4px solid #ffc107;
+        }
+        code {
+            background: #f5f5f5;
+            padding: 2px 6px;
+            border-radius: 3px;
+            font-family: 'Courier New', monospace;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>📝 LinkedIn Post Extractor</h1>
+        <p>Extract all your LinkedIn posts for content analysis</p>
+
+        <div class="instructions">
+            <strong>📋 Instructions:</strong>
+            <ol>
+                <li><strong>For Posts:</strong> Go to <code>https://www.linkedin.com/in/YOUR-USERNAME/recent-activity/all/</code></li>
+                <li>Open browser console (F12 or Cmd+Option+J)</li>
+                <li>Click "Copy Extraction Script" below, paste in console, press Enter</li>
+                <li>Wait for extraction to complete and download the JSON file</li>
+                <li><strong>For Articles:</strong> Go to <code>https://www.linkedin.com/in/YOUR-USERNAME/recent-activity/articles/</code></li>
+                <li>Run the script again (same steps)</li>
+                <li>You'll get a second JSON file with articles</li>
+                <li>Import both files separately</li>
+            </ol>
+        </div>
+
+        <div class="warning">
+            <strong>⚠️ Important:</strong> LinkedIn separates posts and articles into different pages. 
+            Run the script on BOTH pages to get complete history:
+            <ul style="margin-top: 10px;">
+                <li><code>/recent-activity/all/</code> - Regular posts and reposts</li>
+                <li><code>/recent-activity/articles/</code> - Newsletter articles</li>
+            </ul>
+        </div>
+
+        <button onclick="copyScript()">📋 Copy Extraction Script</button>
+        <button onclick="showInstructions()">❓ Show Console Instructions</button>
+
+        <div id="status" class="status"></div>
+
+        <div id="consoleInstructions" style="display:none; margin-top: 20px;">
+            <h3>How to Run in Browser Console:</h3>
+            <ol>
+                <li><strong>Step 1 - Extract Posts:</strong>
+                    <ul>
+                        <li>Go to: <code>https://www.linkedin.com/in/haymangahuja/recent-activity/all/</code></li>
+                        <li>Open console: <code>F12</code> or <code>Ctrl+Shift+J</code> (Windows) / <code>Cmd+Option+J</code> (Mac)</li>
+                        <li>Click "Copy Extraction Script" button above</li>
+                        <li>Paste in console and press Enter</li>
+                        <li>Wait for download (e.g., <code>linkedin_posts_2026-04-08.json</code>)</li>
+                    </ul>
+                </li>
+                <li><strong>Step 2 - Extract Articles:</strong>
+                    <ul>
+                        <li>Go to: <code>https://www.linkedin.com/in/haymangahuja/recent-activity/articles/</code></li>
+                        <li>Console should still be open</li>
+                        <li>Paste the same script and press Enter</li>
+                        <li>Wait for download (will have same filename, browser will add (1) to it)</li>
+                    </ul>
+                </li>
+                <li><strong>Step 3 - Import Both Files:</strong>
+                    <ul>
+                        <li>Import first file: <code>python3 -m linkedin_content_assistant.main import-history --profile haymang --file linkedin_posts_2026-04-08.json</code></li>
+                        <li>Import second file: <code>python3 -m linkedin_content_assistant.main import-history --profile haymang --file "linkedin_posts_2026-04-08 (1).json"</code></li>
+                    </ul>
+                </li>
+            </ol>
+        </div>
+    </div>
+
+    <script>
+        const extractionScript = `
+(async function() {
+    console.clear();
+    console.log('═══════════════════════════════════════════════════════════');
+    console.log('🚀 LinkedIn Post Extractor Started');
+    console.log('═══════════════════════════════════════════════════════════');
+    console.log('📊 This will extract from TWO sections:');
+    console.log('   1. Recent Activity (posts)');
+    console.log('   2. Articles (newsletter articles)');
+    console.log('⚠️  Ignore any extension errors - they are harmless');
+    console.log('');
+    
+    const posts = [];
+    const seenPosts = new Set();
+    let scrollAttempts = 0;
+    const maxScrollAttempts = 50;
+    let lastPostCount = 0;
+    
+    // Detect which page we're on
+    const currentUrl = window.location.href;
+    const isArticlesPage = currentUrl.includes('/recent-activity/articles/');
+    const isAllActivityPage = currentUrl.includes('/recent-activity/all/');
+    
+    if (!isArticlesPage && !isAllActivityPage) {
+        console.log('⚠️  WARNING: You should be on one of these pages:');
+        console.log('   - /recent-activity/all/ (for posts)');
+        console.log('   - /recent-activity/articles/ (for articles)');
+        console.log('');
+        console.log('Current page will be extracted, but results may be incomplete.');
+        console.log('');
+    }
+    
+    // Helper function to extract post data
+    function extractPostData(postElement) {
+        try {
+            // Try multiple selectors for post content
+            const postText = 
+                postElement.querySelector('.feed-shared-update-v2__description')?.innerText?.trim() ||
+                postElement.querySelector('.feed-shared-text')?.innerText?.trim() ||
+                postElement.querySelector('.break-words')?.innerText?.trim() ||
+                postElement.querySelector('[data-test-id="main-feed-activity-card__commentary"]')?.innerText?.trim() ||
+                postElement.querySelector('.feed-shared-inline-show-more-text')?.innerText?.trim() ||
+                '';
+            
+            // Extract article title if present
+            const articleTitle = 
+                postElement.querySelector('.feed-shared-article__title')?.innerText?.trim() ||
+                postElement.querySelector('[data-test-id="article-title"]')?.innerText?.trim() ||
+                '';
+            
+            // Extract article description if present
+            const articleDescription = 
+                postElement.querySelector('.feed-shared-article__description')?.innerText?.trim() ||
+                '';
+            
+            // Combine article content
+            let fullContent = postText;
+            if (articleTitle) {
+                fullContent = articleTitle + '\\n\\n' + (articleDescription || postText);
+            }
+            
+            // Extract timestamp
+            const timestamp = 
+                postElement.querySelector('time')?.getAttribute('datetime') ||
+                postElement.querySelector('.feed-shared-actor__sub-description')?.innerText?.trim() ||
+                postElement.querySelector('[data-test-id="feed-shared-actor__sub-description"]')?.innerText?.trim() ||
+                '';
+            
+            // Extract engagement metrics
+            const likesElement = postElement.querySelector('.social-details-social-counts__reactions-count, [data-test-id="social-actions__reaction-count"]');
+            const commentsElement = postElement.querySelector('.social-details-social-counts__comments, [data-test-id="social-actions__comment-count"]');
+            const sharesElement = postElement.querySelector('.social-details-social-counts__shares, [data-test-id="social-actions__share-count"]');
+            
+            const engagement = {
+                likes: likesElement?.innerText?.trim() || '0',
+                comments: commentsElement?.innerText?.trim().replace(/\\D/g, '') || '0',
+                shares: sharesElement?.innerText?.trim().replace(/\\D/g, '') || '0'
+            };
+            
+            // Extract hashtags
+            const hashtags = [];
+            postElement.querySelectorAll('a[href*="/feed/hashtag/"], a[href*="/hashtag/"]').forEach(tag => {
+                const hashtagText = tag.innerText.trim();
+                if (hashtagText && !hashtags.includes(hashtagText)) {
+                    hashtags.push(hashtagText);
+                }
+            });
+            
+            // Detect post type - check for article indicators
+            const hasArticleClass = postElement.classList.contains('article-card') || 
+                                   postElement.querySelector('.article-card') ||
+                                   postElement.querySelector('[data-test-id="article-card"]');
+            const isArticle = !!articleTitle || 
+                            postElement.querySelector('.feed-shared-article') ||
+                            hasArticleClass ||
+                            postElement.querySelector('.feed-shared-linkedin-video__article-link');
+            const isRepost = postElement.querySelector('.feed-shared-update-v2__description-wrapper .update-components-actor__description');
+            
+            // Extract media info
+            const hasImage = !!postElement.querySelector('.feed-shared-image, [data-test-id="feed-images-content"]');
+            const hasVideo = !!postElement.querySelector('.feed-shared-video, [data-test-id="feed-video"]');
+            const hasDocument = !!postElement.querySelector('.feed-shared-document');
+            
+            return {
+                content: fullContent,
+                timestamp: timestamp,
+                engagement: engagement,
+                hashtags: hashtags,
+                length: fullContent.length,
+                metadata: {
+                    type: isArticle ? 'article' : (isRepost ? 'repost' : 'post'),
+                    has_image: hasImage,
+                    has_video: hasVideo,
+                    has_document: hasDocument,
+                    article_title: articleTitle || null
+                }
+            };
+        } catch (e) {
+            console.error('Error extracting post:', e);
+            return null;
+        }
+    }
+    
+    // Scroll and collect posts
+    while (scrollAttempts < maxScrollAttempts) {
+        // Find all post elements - try multiple selectors including article-specific ones
+        const postElements = document.querySelectorAll(
+            '.feed-shared-update-v2, ' +
+            '[data-urn*="urn:li:activity"], ' +
+            '[data-test-id="main-feed-activity-card"], ' +
+            '.feed-shared-article, ' +
+            '.occludable-update, ' +
+            '.article-card, ' +
+            '[data-test-id="article-card"], ' +
+            '.profile-creator-shared-feed-update__container'
+        );
+        
+        // Extract data from each post
+        postElements.forEach(element => {
+            const postData = extractPostData(element);
+            if (postData && postData.content && postData.content.length > 10 && !seenPosts.has(postData.content)) {
+                posts.push(postData);
+                seenPosts.add(postData.content);
+            }
+        });
+        
+        // Show progress only when new posts are found
+        if (posts.length > lastPostCount) {
+            const newPosts = posts.length - lastPostCount;
+            console.log(\`📝 Scroll \${scrollAttempts + 1}: Found \${newPosts} new post(s) | Total: \${posts.length}\`);
+            lastPostCount = posts.length;
+        } else {
+            console.log(\`⏳ Scroll \${scrollAttempts + 1}: No new posts found | Total: \${posts.length}\`);
+        }
+        
+        // Scroll down
+        window.scrollTo(0, document.body.scrollHeight);
+        
+        // Wait for new content to load
+        await new Promise(resolve => setTimeout(resolve, 2000));
+        
+        scrollAttempts++;
+        
+        // Check if we've reached the end
+        const currentHeight = document.body.scrollHeight;
+        await new Promise(resolve => setTimeout(resolve, 1000));
+        if (currentHeight === document.body.scrollHeight && scrollAttempts > 5) {
+            console.log('');
+            console.log('✅ Reached end of posts - no more content to load');
+            break;
+        }
+    }
+    
+    console.log('');
+    console.log('═══════════════════════════════════════════════════════════');
+    
+    // Categorize posts
+    const articles = posts.filter(p => p.metadata.type === 'article');
+    const regularPosts = posts.filter(p => p.metadata.type === 'post');
+    const reposts = posts.filter(p => p.metadata.type === 'repost');
+    
+    console.log('✅ EXTRACTION COMPLETE FOR THIS PAGE!');
+    console.log('═══════════════════════════════════════════════════════════');
+    console.log(\`📊 Total items collected: \${posts.length}\`);
+    console.log(\`   - Articles: \${articles.length}\`);
+    console.log(\`   - Regular posts: \${regularPosts.length}\`);
+    console.log(\`   - Reposts: \${reposts.length}\`);
+    console.log('');
+    
+    // Check if we need to extract from another page
+    if (isAllActivityPage && articles.length === 0) {
+        console.log('💡 TIP: No articles found on this page.');
+        console.log('   To extract newsletter articles, go to:');
+        console.log('   https://www.linkedin.com/in/haymangahuja/recent-activity/articles/');
+        console.log('   and run this script again.');
+        console.log('');
+    } else if (isArticlesPage) {
+        console.log('💡 TIP: To also extract regular posts, go to:');
+        console.log('   https://www.linkedin.com/in/haymangahuja/recent-activity/all/');
+        console.log('   and run this script again.');
+        console.log('');
+    }
+    
+    // Prepare data for export
+    const exportData = {
+        profile_id: "haymang",
+        extraction_date: new Date().toISOString(),
+        total_posts: posts.length,
+        summary: {
+            articles: articles.length,
+            posts: regularPosts.length,
+            reposts: reposts.length,
+            with_images: posts.filter(p => p.metadata.has_image).length,
+            with_videos: posts.filter(p => p.metadata.has_video).length
+        },
+        posts: posts
+    };
+    
+    // Download as JSON
+    const blob = new Blob([JSON.stringify(exportData, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = \`linkedin_posts_\${new Date().toISOString().split('T')[0]}.json\`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+    
+    console.log('💾 File downloaded: ' + a.download);
+    console.log('');
+    console.log('📁 Next step - Import this file using:');
+    console.log('   python3 -m linkedin_content_assistant.main import-history --profile haymang --file ' + a.download);
+    console.log('');
+    console.log('═══════════════════════════════════════════════════════════');
+    
+    return exportData;
+})();
+`;
+
+        function copyScript() {
+            navigator.clipboard.writeText(extractionScript).then(() => {
+                showStatus('✅ Script copied to clipboard! Now follow the console instructions.', 'success');
+                showInstructions();
+            }).catch(err => {
+                showStatus('❌ Failed to copy. Please copy manually from the console.', 'error');
+            });
+        }
+
+        function showInstructions() {
+            document.getElementById('consoleInstructions').style.display = 'block';
+        }
+
+        function showStatus(message, type) {
+            const statusDiv = document.getElementById('status');
+            statusDiv.textContent = message;
+            statusDiv.className = 'status ' + type;
+        }
+    </script>
+</body>
+</html>
+`;

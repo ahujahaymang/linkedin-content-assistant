@@ -21,6 +21,7 @@ from typing import Optional
 from .config.config import load_config, AppConfig
 from .profiles.manager import ProfileManager
 from .memory.store import create_memory_store
+from .memory.profile_store import ProfileMemoryStore
 from .llm.factory import LLMFactory
 from .llm.config import LLMConfig, ProviderConfig
 from .llm.base import LLMProvider
@@ -101,7 +102,7 @@ async def initialize_components(config: AppConfig) -> tuple:
         profiles = profile_manager.list_profiles()
         logger.info(f"ProfileManager initialized with {len(profiles)} profile(s): {', '.join(profiles) if profiles else 'none'}")
         
-        # Initialize MemoryStore
+        # Initialize MemoryStore (legacy - for events)
         logger.info("Initializing MemoryStore...")
         # Map config storage_type to actual store implementation
         store_type_map = {
@@ -116,6 +117,11 @@ async def initialize_components(config: AppConfig) -> tuple:
             persistence_file=str(Path(config.memory.directory) / "events.json")
         )
         logger.info(f"MemoryStore initialized (type: {config.memory.storage_type})")
+        
+        # Initialize ProfileMemoryStore (new - for profile-specific data)
+        logger.info("Initializing ProfileMemoryStore...")
+        profile_store = ProfileMemoryStore(base_dir=config.memory.directory)
+        logger.info("ProfileMemoryStore initialized")
         
         # Initialize LLMFactory
         logger.info("Initializing LLMFactory...")
@@ -169,7 +175,7 @@ async def initialize_components(config: AppConfig) -> tuple:
         logger.info("ContentOrchestrator initialized")
         
         logger.info("All components initialized successfully")
-        return profile_manager, memory_store, llm_factory, orchestrator
+        return profile_manager, memory_store, profile_store, llm_factory, orchestrator
         
     except Exception as e:
         logger.error(f"Component initialization failed: {e}", exc_info=True)
@@ -444,7 +450,7 @@ async def async_main(args: argparse.Namespace) -> int:
         logger.info("Configuration loaded successfully")
         
         # Initialize components
-        profile_manager, memory_store, llm_factory, orchestrator = await initialize_components(config)
+        profile_manager, memory_store, profile_store, llm_factory, orchestrator = await initialize_components(config)
         
         # Execute command
         if args.command == "start":
@@ -465,6 +471,80 @@ async def async_main(args: argparse.Namespace) -> int:
             # Health check
             is_healthy = await health_check(profile_manager, memory_store, llm_factory)
             return 0 if is_healthy else 1
+        
+        elif args.command == "import-history":
+            # Import post history
+            if not args.profile:
+                logger.error("--profile is required for import-history command")
+                return 1
+            if not args.file:
+                logger.error("--file is required for import-history command")
+                return 1
+            
+            from linkedin_content_assistant.profiles.history_importer import HistoryImporter
+            importer = HistoryImporter(profile_store)
+            result = importer.import_from_file(args.file, args.profile)
+            
+            if result["success"]:
+                logger.info(f"✓ Successfully imported {result['imported']} posts")
+                logger.info(f"  Total posts: {result['total_posts']}")
+                logger.info(f"  Skipped: {result['skipped']}")
+                logger.info(f"  Style analysis complete")
+                
+                # Show profile stats
+                stats = profile_store.get_profile_stats(args.profile)
+                logger.info(f"\nProfile '{args.profile}' now has:")
+                logger.info(f"  Total posts: {stats['total_posts']}")
+                logger.info(f"  Post types: {stats['post_types']}")
+                
+                return 0
+            else:
+                logger.error(f"✗ Import failed: {result.get('error', 'Unknown error')}")
+                return 1
+        
+        elif args.command == "profile-stats":
+            # View profile statistics
+            if not args.profile:
+                logger.error("--profile is required for profile-stats command")
+                return 1
+            
+            stats = profile_store.get_profile_stats(args.profile)
+            
+            logger.info("=" * 80)
+            logger.info(f"Profile Statistics: {args.profile}")
+            logger.info("=" * 80)
+            logger.info(f"Total Posts: {stats['total_posts']}")
+            logger.info(f"Post Types: {stats['post_types']}")
+            logger.info(f"Total Events: {stats['total_events']}")
+            logger.info(f"Has Style Analysis: {stats['has_style_analysis']}")
+            logger.info("=" * 80)
+            
+            return 0
+        
+        elif args.command == "migrate-data":
+            # Migrate old data to new profile-specific storage
+            old_events_file = Path(config.memory.directory) / "events.json"
+            
+            if not old_events_file.exists():
+                logger.info("No old events.json file found - nothing to migrate")
+                return 0
+            
+            logger.info(f"Migrating data from {old_events_file}")
+            stats = profile_store.migrate_from_old_store(str(old_events_file))
+            
+            logger.info("=" * 80)
+            logger.info("Migration Complete!")
+            logger.info("=" * 80)
+            for profile_id, count in stats.items():
+                logger.info(f"  {profile_id}: {count} posts migrated")
+            logger.info("=" * 80)
+            logger.info(f"\nOld file backed up as: {old_events_file}.backup")
+            
+            # Backup old file
+            import shutil
+            shutil.move(str(old_events_file), str(old_events_file) + ".backup")
+            
+            return 0
             
         else:
             logger.error(f"Unknown command: {args.command}")
@@ -497,9 +577,10 @@ def main() -> int:
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Commands:
-  start           Start the application in scheduler mode (continuous operation)
-  generate-once   Generate a single post for testing (requires --profile)
-  health-check    Check health of all components
+  start            Start the application in scheduler mode (continuous operation)
+  generate-once    Generate a single post for testing (requires --profile)
+  health-check     Check health of all components
+  import-history   Import historical LinkedIn posts (requires --profile and --file)
 
 Examples:
   # Start the application
@@ -510,6 +591,15 @@ Examples:
 
   # Check system health
   python3 -m linkedin_content_assistant.main health-check
+  
+  # Import post history
+  python3 -m linkedin_content_assistant.main import-history --profile my-profile --file posts.json
+  
+  # View profile statistics
+  python3 -m linkedin_content_assistant.main profile-stats --profile my-profile
+  
+  # Migrate old data to new profile-specific storage
+  python3 -m linkedin_content_assistant.main migrate-data
 
   # Use custom config file
   python3 -m linkedin_content_assistant.main start --config /path/to/config.yaml
@@ -518,7 +608,7 @@ Examples:
     
     parser.add_argument(
         "command",
-        choices=["start", "generate-once", "health-check"],
+        choices=["start", "generate-once", "health-check", "import-history", "profile-stats", "migrate-data"],
         help="Command to execute"
     )
     
@@ -533,7 +623,14 @@ Examples:
         "--profile",
         type=str,
         default=None,
-        help="Profile ID (required for generate-once command)"
+        help="Profile ID (required for generate-once and import-history commands)"
+    )
+    
+    parser.add_argument(
+        "--file",
+        type=str,
+        default=None,
+        help="File path (required for import-history command)"
     )
     
     args = parser.parse_args()
