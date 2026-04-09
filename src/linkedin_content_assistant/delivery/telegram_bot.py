@@ -487,13 +487,14 @@ class TelegramBot:
         
         return health
     
-    async def start_polling(self, callback) -> None:
+    async def start_polling(self, callback, exit_on_action: bool = False) -> None:
         """
         Start polling for Telegram updates.
         
         Args:
             callback: Async function to call with (feedback_data, last_draft)
                      when /posted or /skip is received
+            exit_on_action: If True, stop polling after processing /posted or /skip
         """
         if not self.is_connected:
             raise RuntimeError("Telegram bot not connected")
@@ -519,6 +520,12 @@ class TelegramBot:
                         # Clear the draft after processing
                         if feedback.action == "posted":
                             self._last_draft = None
+                        
+                        # Exit if requested and action was posted or skipped
+                        if exit_on_action and feedback.action in ["posted", "skipped"]:
+                            self.logger.info(f"Exiting after processing /{feedback.action}")
+                            self.stop_polling()
+                            return
                 
                 # Sleep briefly between polls
                 await asyncio.sleep(1)

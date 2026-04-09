@@ -1,0 +1,45 @@
+{
+  "logs": {
+    "logs_collected": {
+      "files": {
+        "collect_list": [
+          {
+            "file_path": "/opt/content-assistant/logs/linkedin_content_assistant.log",
+            "log_group_name": "/aws/ec2/content-assistant",
+            "log_stream_name": "{instance_id}/application",
+            "timezone": "UTC"
+          }
+        ]
+      }
+    },
+    "log_stream_name": "{instance_id}"
+  },
+  "metrics": {
+    "namespace": "ContentAssistant",
+    "metrics_collected": {
+      "disk": {
+        "measurement": [
+          {
+            "name": "used_percent",
+            "rename": "DiskUsedPercent",
+            "unit": "Percent"
+          }
+        ],
+        "metrics_collection_interval": 300,
+        "resources": [
+          "/opt/content-assistant"
+        ]
+      },
+      "mem": {
+        "measurement": [
+          {
+            "name": "mem_used_percent",
+            "rename": "MemoryUsedPercent",
+            "unit": "Percent"
+          }
+        ],
+        "metrics_collection_interval": 300
+      }
+    }
+  }
+}

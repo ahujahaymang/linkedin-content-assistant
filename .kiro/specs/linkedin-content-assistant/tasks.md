@@ -211,15 +211,16 @@ The implementation follows a component-by-component approach, starting with proj
 - [~] 8. Checkpoint - Verify new components
   - Ensure all tests pass, ask the user if questions arise.
 
-- [ ] 9. Adapt Telegram Bot for delivery-only mode
-  - [~] 9.1 Copy and simplify Telegram Bot
+- [x] 9. Adapt Telegram Bot for delivery-only mode
+  - [x] 9.1 Copy and simplify Telegram Bot
     - Copy AIManager/linkedin_ai_manager/ui/telegram_bot.py to src/linkedin_content_assistant/delivery/
     - Remove approval workflow functionality
     - Simplify to delivery-only mode
     - Implement send_post_draft() with copy-paste optimized formatting
     - Implement send_alert() for error notifications
-    - Implement handle_user_feedback() for /posted and /skip commands
+    - Implement handle_user_feedback() for /posted, /skip, and /regenerate commands
     - Add manual posting instructions to message format
+    - Implement polling mechanism for continuous listening
     - _Requirements: 7.1-7.7, 8.3, 15.4_
   
   - [~] 9.2 Write property tests for Telegram Bot
@@ -239,7 +240,7 @@ The implementation follows a component-by-component approach, starting with proj
     - Test user feedback handling (/posted, /skip commands)
     - _Requirements: 7.1-7.7_
 
-- [ ] 10. Build Content Orchestrator component
+- [x] 10. Build Content Orchestrator component
   - [x] 10.1 Implement Content Orchestrator core functionality
     - Create src/linkedin_content_assistant/orchestration/orchestrator.py
     - Implement generate_daily_post() workflow method
@@ -248,6 +249,8 @@ The implementation follows a component-by-component approach, starting with proj
     - Implement deliver_to_telegram() for delivery coordination
     - Create DailyPostResult data model
     - Wire together: TrendMonitor → ContentStrategy → Drafting → Telegram
+    - Integrate trending articles from TrendScanner and TrendRanker
+    - Store content_idea with drafts for regeneration support
     - _Requirements: 3.1-3.7, 8.4-8.6, 13.4_
   
   - [~] 10.2 Write property tests for Content Orchestrator
@@ -317,6 +320,141 @@ The implementation follows a component-by-component approach, starting with proj
 
 - [~] 13. Checkpoint - Verify orchestration and configuration
   - Ensure all tests pass, ask the user if questions arise.
+
+- [x] 13.1 Build LinkedIn Post History Import System
+  - [x] 13.1.1 Create browser-based extraction tools
+    - Create tools/linkedin_post_extractor.html for regular posts
+    - Create tools/linkedin_newsletter_extractor.html for newsletter articles
+    - Implement JavaScript extraction scripts that run in browser console
+    - Extract post content, engagement metrics, timestamps, and metadata
+    - Support scrolling and pagination for complete history extraction
+    - _New Feature: Manual history import_
+  
+  - [x] 13.1.2 Implement history importer module
+    - Create src/linkedin_content_assistant/profiles/history_importer.py
+    - Implement import_from_file() to process extracted JSON
+    - Implement analyze_writing_style() for style pattern extraction
+    - Store posts in profile-specific storage
+    - Generate style analysis (opening patterns, sentence structure, vocabulary, hashtags, emoji usage)
+    - _New Feature: Style learning from history_
+  
+  - [x] 13.1.3 Add CLI command for history import
+    - Add import-history command to main.py
+    - Support --profile and --file parameters
+    - Display import statistics and style analysis results
+    - _New Feature: CLI integration_
+
+- [x] 13.2 Refactor Storage to Profile-Specific Structure
+  - [x] 13.2.1 Create ProfileMemoryStore
+    - Create src/linkedin_content_assistant/memory/profile_store.py
+    - Implement profile-isolated directory structure: data/memory/{profile_id}/
+    - Separate files: posts.json, style_analysis.json, events.json, content_intelligence.json
+    - Implement methods: store_historical_post(), get_historical_posts(), get_style_analysis()
+    - Support for pending drafts queue (pending_drafts.json)
+    - Support for rejected posts (rejected_posts.json)
+    - _New Feature: Multi-profile support with isolation_
+  
+  - [x] 13.2.2 Add migration support
+    - Implement migrate_from_old_store() to migrate from single events.json
+    - Add migrate-data CLI command
+    - Backup old data before migration
+    - _New Feature: Data migration_
+  
+  - [x] 13.2.3 Add profile statistics
+    - Implement get_profile_stats() for profile overview
+    - Add profile-stats CLI command
+    - Display post counts, types, and analysis status
+    - _New Feature: Profile insights_
+
+- [x] 13.3 Build Content Intelligence System
+  - [x] 13.3.1 Implement rule-based content analysis
+    - Create src/linkedin_content_assistant/memory/content_intelligence.py
+    - Analyze content themes and topic clusters
+    - Track engagement patterns and content evolution
+    - Identify knowledge domains and audience insights
+    - Detect content gaps and successful patterns
+    - Extract key messages and content progression
+    - _New Feature: Strategic content direction_
+  
+  - [x] 13.3.2 Add LLM-powered deep analysis
+    - Implement _llm_deep_analysis() for semantic understanding
+    - Extract unique voice and positioning
+    - Identify core beliefs and semantic themes
+    - Analyze engagement drivers and quality patterns
+    - Provide strategic opportunities and recommendations
+    - _New Feature: AI-powered content insights_
+  
+  - [x] 13.3.3 Integrate with drafting agent
+    - Pass content intelligence to drafting agent
+    - Include strategic direction in system prompts
+    - Use insights for better content generation
+    - Add analyze-content CLI command with --refresh flag
+    - _New Feature: Intelligence-driven generation_
+
+- [x] 13.4 Build Trending Articles Integration
+  - [x] 13.4.1 Implement TrendScanner
+    - Create src/linkedin_content_assistant/trends/scanner.py
+    - Scan Hacker News via API
+    - Scrape TechCrunch articles
+    - Fetch article content for context
+    - Use aiohttp for async requests
+    - _New Feature: Multi-source trend scanning_
+  
+  - [x] 13.4.2 Implement TrendRanker
+    - Create src/linkedin_content_assistant/trends/ranker.py
+    - Use LLM to rank articles by profile relevance
+    - Generate relevance scores and reasoning
+    - Suggest content angles for each article
+    - Return top N articles
+    - _New Feature: AI-powered trend ranking_
+  
+  - [x] 13.4.3 Integrate with content generation
+    - Update ContentStrategyAgent to accept trending_articles
+    - Ensure at least one option is based on trending article
+    - Pass article references through to drafting
+    - Send article links separately in Telegram
+    - Add "Link in comments" text to posts with articles
+    - _New Feature: Trend-based content generation_
+
+- [x] 13.5 Implement User Feedback Commands
+  - [x] 13.5.1 Implement /posted command
+    - Add pending drafts queue system (FIFO)
+    - Implement add_pending_draft() and pop_pending_draft()
+    - Save posted drafts to historical posts
+    - Add listen CLI command for processing feedback
+    - Process pending messages on scheduler startup
+    - _New Feature: Post tracking_
+  
+  - [x] 13.5.2 Implement /skip command
+    - Create rejected posts storage system
+    - Implement save_rejected_post() and get_rejected_posts()
+    - Support optional rejection reason
+    - Integrate rejected posts as negative examples in drafting
+    - Learn from rejections to avoid similar angles
+    - _New Feature: Learning from feedback_
+  
+  - [x] 13.5.3 Implement /regenerate command
+    - Store content_idea with each draft
+    - Implement peek_pending_draft() to view without removing
+    - Implement replace_pending_draft() for regeneration
+    - Regenerate with same topic/angle but different execution
+    - Update Telegram bot to handle /regenerate
+    - Full regeneration workflow in listen command
+    - _New Feature: Draft regeneration_
+  
+  - [x] 13.5.4 Strengthen character limit enforcement
+    - Update system prompt with hard 800-1300 character limit
+    - Add explicit character limit warnings in user prompt
+    - Relax post-generation validation (500 char tolerance)
+    - Shift enforcement to prompt engineering
+    - _New Feature: Better length control_
+
+- [~] 13.6 Checkpoint - Verify new features
+  - Ensure all new features work end-to-end
+  - Test history import → style learning → content generation
+  - Test trending articles → ranking → content generation
+  - Test /posted, /skip, /regenerate commands
+  - Verify profile-specific storage isolation
 
 - [ ] 14. Build monitoring and health checks
   - [~] 14.1 Implement monitoring components

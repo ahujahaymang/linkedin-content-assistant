@@ -30,13 +30,12 @@ graph TB
         CG[Content Generator]
         CS[Content Strategy Agent]
         DA[Drafting Agent]
-        SL[Style Learner]
+        CI[Content Intelligence]
     end
     
     subgraph "Trend Monitoring Layer"
-        FS[Feed Scanner]
-        WS[Web Scraper]
-        TM[Trend Monitor]
+        TS[Trend Scanner]
+        TR[Trend Ranker]
     end
     
     subgraph "Orchestration Layer"
@@ -50,8 +49,9 @@ graph TB
     end
     
     subgraph "Storage Layer"
-        PS[Profile Store]
-        MS[Memory Store]
+        PM[Profile Manager]
+        PMS[Profile Memory Store]
+        HI[History Importer]
     end
     
     subgraph "LLM Layer"
@@ -60,7 +60,6 @@ graph TB
     end
     
     subgraph "External Services"
-        LI[LinkedIn Feed API]
         WEB[Web News Sources]
         TG[Telegram API]
     end
@@ -68,30 +67,37 @@ graph TB
     DS -->|Triggers| CO
     CO -->|Requests Options| CS
     CS -->|Uses| LF
-    CS -->|Reads Profile| PS
-    CS -->|Reads History| MS
+    CS -->|Reads Profile| PM
+    CS -->|Reads Trends| TR
     CS -->|Returns Options| CO
     CO -->|Selects & Drafts| DA
     DA -->|Uses| LF
-    DA -->|Reads Style| SL
+    DA -->|Reads History| PMS
+    DA -->|Reads Intelligence| CI
+    DA -->|Reads Rejected| PMS
     DA -->|Returns Draft| CO
     CO -->|Formats & Sends| TB
     TB -->|Delivers| TG
+    TB -->|Receives Commands| TG
     
-    FS -->|Scans| LI
-    FS -->|Stores Trends| MS
-    WS -->|Scrapes| WEB
-    WS -->|Stores News| MS
-    TM -->|Aggregates| MS
-    TM -->|Provides to| CS
+    TS -->|Scrapes| WEB
+    TS -->|Returns Articles| TR
+    TR -->|Uses| LF
+    TR -->|Ranks by Relevance| CS
     
-    SL -->|Analyzes| MS
-    SL -->|Updates| PS
+    CI -->|Analyzes Posts| PMS
+    CI -->|Uses LLM| LF
+    CI -->|Stores Insights| PMS
+    
+    HI -->|Imports Posts| PMS
+    HI -->|Analyzes Style| CI
     
     LF -->|Routes to| LP
     
-    CO -->|Logs| MS
-    TB -->|Logs| MS
+    CO -->|Logs| PMS
+    CO -->|Saves Drafts| PMS
+    TB -->|Logs| PMS
+    TB -->|Processes Feedback| PMS
 ```
 
 ### Architecture Layers
@@ -99,25 +105,25 @@ graph TB
 **Content Generation Layer**: Responsible for creating LinkedIn post content
 - Content Strategy Agent: Generates 3 diverse post options with different angles
 - Drafting Agent: Converts selected option into polished LinkedIn post
-- Style Learner: Analyzes writing patterns from post history
+- Content Intelligence: Analyzes historical posts for strategic direction and pattern learning
 - Content Generator: Orchestrates the generation workflow
 
 **Trend Monitoring Layer**: Tracks trending topics and news
-- Feed Scanner: Reads LinkedIn feed for trending posts (read-only)
-- Web Scraper: Monitors tech news sources
-- Trend Monitor: Aggregates trends from multiple sources
+- Trend Scanner: Monitors tech news sources (Hacker News, TechCrunch)
+- Trend Ranker: Uses LLM to rank articles by relevance to user profile
 
 **Orchestration Layer**: Coordinates daily workflows
 - Daily Scheduler: Triggers content generation at configured times
 - Content Orchestrator: Manages the end-to-end content generation flow
 
 **Delivery Layer**: Sends content to user via Telegram
-- Telegram Bot: Handles message delivery and formatting
+- Telegram Bot: Handles message delivery, formatting, and user feedback commands
 - Message Formatter: Formats posts for copy-paste convenience
 
 **Storage Layer**: Persists profiles, history, and trends
-- Profile Store: Manages profile configurations and learned styles
-- Memory Store: Stores post history, trends, and engagement metrics
+- Profile Manager: Manages profile configurations
+- Profile Memory Store: Profile-specific storage for posts, style analysis, events, rejected posts, and pending drafts
+- History Importer: Imports LinkedIn post history from browser-extracted JSON
 
 **LLM Layer**: Provides language model capabilities
 - LLM Factory: Routes requests to configured providers
@@ -129,250 +135,290 @@ The design leverages existing components from `AIManager/linkedin_ai_manager`:
 
 | Component | Source | Adaptation Required |
 |-----------|--------|---------------------|
-| Profile Store | `profiles/` | None - reuse as-is |
-| Memory Store | `memory/` | None - reuse as-is |
+| Profile Manager | `profiles/manager.py` | None - reuse as-is |
 | LLM Factory | `llm/` | None - reuse as-is |
-| Content Strategy Agent | `agents/content_strategy.py` | None - reuse as-is |
-| Drafting Agent | `agents/drafting.py` | None - reuse as-is |
-| Feed Scanner Agent | `agents/feed_scanner.py` | Remove comment generation (read-only) |
-| Telegram Bot | `ui/telegram_bot.py` | Simplify for delivery-only mode |
-| Scheduler | `scheduler/` | Adapt for daily-only scheduling |
+| Content Strategy Agent | `agents/content_strategy.py` | Enhanced with trending articles integration |
+| Drafting Agent | `agents/drafting.py` | Enhanced with historical context and rejected posts |
+| Telegram Bot | `delivery/telegram_bot.py` | Enhanced with user feedback commands (/posted, /skip, /regenerate) |
 
-**New Components to Build**:
-- Style Learner: Analyzes writing patterns from post history
-- Web Scraper: Monitors tech news sources
-- Trend Monitor: Aggregates trends from multiple sources
-- Content Orchestrator: Simplified workflow for daily generation
-- Main Application: Entry point and configuration
+**New Components Built**:
+- Profile Memory Store: Profile-specific storage structure (replaces single events.json)
+- Content Intelligence: Rule-based + LLM-powered strategic analysis of historical posts
+- History Importer: Browser-based LinkedIn post history extraction and import
+- Trend Scanner: Web scraping for Hacker News and TechCrunch
+- Trend Ranker: LLM-based article relevance ranking
+- Content Orchestrator: Simplified workflow for daily generation with trending articles
+- Main Application: Entry point with CLI commands (generate-once, listen, import-history, analyze-content, profile-stats)
 
 
 ## Components and Interfaces
 
-### 1. Profile Store (Reused)
+### 1. Profile Manager (Reused)
 
-**Responsibility**: Manage profile configurations including identity and learned behavior patterns
+**Responsibility**: Manage profile configurations including identity and behavior patterns
 
 **Interface**:
 ```python
 class ProfileManager:
-    async def get_profile(profile_id: str) -> ProfileConfig
-    async def save_profile(profile: ProfileConfig) -> None
-    async def update_behavior(profile_id: str, behavior: BehaviorConfig) -> ProfileConfig
-    async def list_profiles() -> List[ProfileConfig]
+    def load_profile(profile_id: str) -> ProfileConfig
+    def save_profile(profile: ProfileConfig) -> None
+    def create_profile(profile_id: str, config_data: Dict) -> ProfileConfig
+    def list_profiles() -> List[str]
 ```
 
 **Key Data Structures** (from existing implementation):
-- `ProfileConfig`: Complete profile with identity and behavior
-- `IdentityConfig`: Immutable professional identity
-- `BehaviorConfig`: Adaptive behavior patterns (vocabulary, hooks, emoji usage)
+- `ProfileConfig`: Complete profile with identity, focus areas, target audience, writing style
 - `SeniorityLevel`: Professional level enum
 - `PostingWindow`: Time windows for content generation
 
-**Configuration Storage**: YAML files in `profiles/` directory for human editability
+**Configuration Storage**: YAML files in `profiles/active/` directory for human editability
 
-### 2. Style Learner (New Component)
+### 2. Profile Memory Store (New Component)
 
-**Responsibility**: Analyze previous posts to extract writing patterns and update profile behavior
+**Responsibility**: Profile-specific storage for posts, style analysis, events, rejected posts, and pending drafts
 
 **Interface**:
 ```python
-class StyleLearner:
-    def __init__(llm_factory: LLMFactory, profile_manager: ProfileManager)
+class ProfileMemoryStore:
+    def __init__(profile_id: str, data_dir: str)
     
-    async def analyze_posts(profile_id: str, posts: List[str]) -> StyleAnalysis
-    async def extract_vocabulary_patterns(posts: List[str]) -> VocabularyPatterns
-    async def identify_hook_patterns(posts: List[str], engagement_metrics: List[Dict]) -> List[str]
-    async def analyze_emoji_usage(posts: List[str]) -> EmojiPatterns
-    async def update_profile_behavior(profile_id: str, analysis: StyleAnalysis) -> None
+    # Post history
+    def add_post(post_data: Dict) -> None
+    def get_posts(limit: int = None) -> List[Dict]
+    def get_post_count() -> int
+    
+    # Style analysis
+    def save_style_analysis(analysis: Dict) -> None
+    def get_style_analysis() -> Optional[Dict]
+    
+    # Content intelligence
+    def save_content_intelligence(intelligence: Dict) -> None
+    def get_content_intelligence() -> Optional[Dict]
+    async def analyze_content_intelligence_async(llm_factory: LLMFactory, refresh: bool) -> Dict
+    
+    # Pending drafts (FIFO queue)
+    def add_pending_draft(draft: Dict, content_idea: Dict) -> None
+    def pop_pending_draft() -> Optional[Dict]
+    def peek_pending_draft() -> Optional[Dict]
+    def replace_pending_draft(new_draft: Dict) -> None
+    def get_pending_draft_count() -> int
+    
+    # Rejected posts
+    def save_rejected_post(draft: Dict, reason: str) -> None
+    def get_rejected_posts(limit: int = 10) -> List[Dict]
+    
+    # Events
+    def add_event(event: Dict) -> None
+    def get_events(limit: int = None) -> List[Dict]
 ```
+
+**Storage Structure**:
+```
+data/memory/{profile_id}/
+├── posts.json              # Historical posts
+├── style_analysis.json     # Writing style patterns
+├── content_intelligence.json  # Strategic insights
+├── pending_drafts.json     # FIFO queue of drafts awaiting user action
+├── rejected_posts.json     # Drafts user skipped
+└── events.json            # System events log
+```
+
+**Key Features**:
+- Profile isolation: Each profile has separate directory
+- FIFO queue for pending drafts (supports multiple posts)
+- Rejected posts tracking for learning
+- Content intelligence caching
+- Atomic file operations with backup
+
+### 3. Content Intelligence (New Component)
+
+**Responsibility**: Analyze historical posts to provide strategic direction for new content
+
+**Interface**:
+```python
+class ContentIntelligence:
+    def __init__(llm_factory: LLMFactory = None)
+    
+    async def analyze(posts: List[Dict]) -> Dict
+    def _rule_based_analysis(posts: List[Dict]) -> Dict
+    async def _llm_deep_analysis(posts: List[Dict]) -> Dict
+```
+
+**Analysis Components**:
+
+**Rule-Based Analysis** (Fast, always runs):
+- Content themes and topic clusters
+- Engagement patterns (character count, hashtag usage)
+- Content evolution tracking
+- Knowledge domains identification
+- Audience insights
+- Content gaps identification
+- Successful patterns (opening styles, structures, CTAs)
+- Key messages extraction
+
+**LLM Deep Analysis** (Optional, cached):
+- Unique voice and positioning
+- Core beliefs and values
+- Semantic themes beyond keywords
+- Engagement drivers (what resonates)
+- Strategic opportunities (underexplored topics)
+- Quality patterns (what works, what to avoid)
+
+**Output Structure**:
+```python
+{
+    "rule_based": {
+        "themes": {...},
+        "engagement_patterns": {...},
+        "content_evolution": {...},
+        "knowledge_domains": [...],
+        "audience_insights": {...},
+        "content_gaps": {...},
+        "successful_patterns": {...}
+    },
+    "llm_insights": {
+        "unique_voice": "...",
+        "core_beliefs": [...],
+        "semantic_themes": [...],
+        "engagement_drivers": [...],
+        "strategic_opportunities": [...],
+        "quality_patterns": {...}
+    },
+    "strategic_direction": {
+        "priority_topics": [...],
+        "content_angles": [...],
+        "audience_alignment": "...",
+        "format_suggestions": [...]
+    }
+}
+```
+
+
+### 4. History Importer (New Component)
+
+**Responsibility**: Import LinkedIn post history from browser-extracted JSON files
+
+**Interface**:
+```python
+class HistoryImporter:
+    def __init__(profile_store: ProfileMemoryStore)
+    
+    async def import_posts(file_path: str) -> ImportResult
+    def _parse_post_data(raw_data: Dict) -> Dict
+    def _extract_metadata(post: Dict) -> Dict
+```
+
+**Browser Extraction Tools**:
+- `tools/linkedin_post_extractor.html`: Extracts regular posts from `/recent-activity/all/`
+- `tools/linkedin_newsletter_extractor.html`: Extracts newsletter articles
+
+**Import Workflow**:
+1. User opens HTML file in browser
+2. Navigates to LinkedIn profile activity page
+3. Runs extraction script in browser console
+4. Script scrolls and extracts all posts/articles
+5. Downloads JSON file
+6. User runs: `python3 -m linkedin_content_assistant.main import-history --profile {id} --file posts.json`
+7. System stores posts and triggers style analysis
 
 **Data Structures**:
 ```python
 @dataclass
-class StyleAnalysis:
-    vocabulary_bias: str  # casual, professional, technical, academic
-    hook_patterns: List[str]
-    emoji_frequency: str  # none, low, moderate, high
-    emoji_placement: str  # start, end, inline, mixed
-    sentence_length_avg: float
-    sentence_length_variance: float
-    paragraph_structure: str
-    tone_characteristics: Dict[str, float]
+class ImportResult:
+    success: bool
+    posts_imported: int
+    posts_skipped: int
+    errors: List[str]
 ```
 
-**Algorithm**:
-1. Parse posts into sentences and analyze structure
-2. Extract vocabulary and classify formality level
-3. Identify opening hooks from high-engagement posts
-4. Count and categorize emoji usage patterns
-5. Calculate sentence length statistics
-6. Use LLM to analyze tone and style characteristics
-7. Update profile's BehaviorConfig with learned patterns
+### 5. Trend Scanner (New Component)
 
-### 3. Memory Store (Reused)
-
-**Responsibility**: Store post history, trends, engagement metrics, and system events
+**Responsibility**: Scrape tech news sources for trending articles
 
 **Interface**:
 ```python
-class MemoryStore:
-    def store_event(event: MemoryEvent) -> str
-    def query_events(profile_id: str, event_type: str, limit: int) -> List[MemoryEvent]
-    def get_recent_posts(profile_id: str, limit: int) -> List[Dict]
-    def store_trend(trend: TrendData) -> None
-    def get_trending_topics(profile_id: str, hours: int) -> List[TrendData]
-    def export_history(profile_id: str, start_date: datetime, end_date: datetime) -> List[Dict]
+class TrendScanner:
+    async def scan_all_sources() -> List[TrendingArticle]
+    async def scan_hackernews() -> List[TrendingArticle]
+    async def scan_techcrunch() -> List[TrendingArticle]
+    async def fetch_article_content(url: str) -> Optional[str]
 ```
 
-**Event Types**:
-- `post_draft`: Generated post draft
-- `post_delivered`: Draft delivered via Telegram
-- `post_published`: User manually posted to LinkedIn
-- `trend_detected`: Trending topic identified
-- `news_item`: Web news article stored
-- `style_update`: Profile behavior updated
-- `error`: System error occurred
-
-
-### 4. Feed Scanner (Adapted from Existing)
-
-**Responsibility**: Read LinkedIn feed for trending posts (read-only, no commenting)
-
-**Interface**:
-```python
-class FeedScanner:
-    def __init__(llm_factory: LLMFactory, memory_store: MemoryStore)
-    
-    async def scan_feed(profile_id: str, max_posts: int = 50) -> FeedScanResult
-    async def identify_trending_posts(posts: List[FeedPost]) -> List[FeedPost]
-    async def extract_topics(posts: List[FeedPost]) -> List[str]
-    async def analyze_hashtags(posts: List[FeedPost]) -> Dict[str, int]
-    async def filter_by_relevance(posts: List[FeedPost], domains: List[str]) -> List[FeedPost]
-```
-
-**Adaptations from Original**:
-- Remove comment generation functionality
-- Remove all write operations to LinkedIn
-- Focus only on trend identification
-- Add rate limiting (max 50 posts per session)
-- Add human-like delays between reads
+**Data Sources**:
+- Hacker News (via API)
+- TechCrunch (via web scraping)
 
 **Data Structures**:
 ```python
 @dataclass
-class FeedPost:
-    id: str
-    author: str
-    content: str
-    timestamp: datetime
-    engagement_metrics: Dict[str, int]  # likes, comments, shares
-    hashtags: List[str]
-    post_type: str
-
-@dataclass
-class FeedScanResult:
-    posts_scanned: int
-    trending_topics: List[str]
-    trending_hashtags: List[str]
-    high_engagement_posts: List[FeedPost]
-    scan_timestamp: datetime
-```
-
-### 5. Web Scraper (New Component)
-
-**Responsibility**: Monitor web sources for tech news and trending topics
-
-**Interface**:
-```python
-class WebScraper:
-    def __init__(memory_store: MemoryStore, config: ScraperConfig)
-    
-    async def scrape_sources(sources: List[str]) -> List[NewsItem]
-    async def extract_article_data(url: str) -> NewsItem
-    async def filter_by_relevance(articles: List[NewsItem], domains: List[str]) -> List[NewsItem]
-    async def identify_cross_source_trends(articles: List[NewsItem]) -> List[str]
-    def respect_rate_limits(source: str) -> bool
-```
-
-**Configuration**:
-```python
-@dataclass
-class ScraperConfig:
-    sources: List[str]  # URLs to monitor
-    user_agent: str
-    request_timeout: int = 30
-    max_retries: int = 3
-    respect_robots_txt: bool = True
-    rate_limit_delay: int = 5  # seconds between requests
-```
-
-**Data Structures**:
-```python
-@dataclass
-class NewsItem:
+class TrendingArticle:
     title: str
-    summary: str
     url: str
     source: str
-    published_date: datetime
-    topics: List[str]
-    relevance_score: float
+    score: int
+    summary: Optional[str]
+    content: Optional[str]
+    published_date: Optional[datetime]
 ```
 
-**Rate Limiting Strategy**:
-- Check robots.txt before scraping
-- Respect rate limit headers (429 responses)
-- Implement exponential backoff: 5s, 10s, 20s, 40s
-- Maximum 1 request per 5 seconds per source
-- Cache results for 1 hour to reduce requests
+**Features**:
+- Async HTTP requests with aiohttp
+- HTML parsing with BeautifulSoup
+- Article content fetching for context
+- Rate limiting and error handling
 
 
-### 6. Trend Monitor (New Component)
+### 6. Trend Ranker (New Component)
 
-**Responsibility**: Aggregate trends from LinkedIn and web sources, provide to content generator
+**Responsibility**: Use LLM to rank articles by relevance to user profile
 
 **Interface**:
 ```python
-class TrendMonitor:
-    def __init__(memory_store: MemoryStore)
+class TrendRanker:
+    def __init__(llm_factory: LLMFactory)
     
-    async def get_trending_topics(profile_id: str, hours: int = 24) -> List[TrendData]
-    async def combine_sources(linkedin_trends: List[str], web_trends: List[str]) -> List[TrendData]
-    async def rank_by_relevance(trends: List[TrendData], profile: ProfileConfig) -> List[TrendData]
-    async def filter_by_domains(trends: List[TrendData], domains: List[str]) -> List[TrendData]
+    async def rank_articles(
+        articles: List[TrendingArticle],
+        profile: ProfileConfig,
+        top_n: int = 3
+    ) -> List[RankedArticle]
 ```
 
 **Data Structures**:
 ```python
 @dataclass
-class TrendData:
-    topic: str
-    sources: List[str]  # linkedin, hackernews, techcrunch, etc.
-    first_seen: datetime
-    last_seen: datetime
-    frequency: int
+class RankedArticle:
+    article: TrendingArticle
     relevance_score: float
-    related_hashtags: List[str]
-    sample_content: str
+    reasoning: str
+    suggested_angle: str
 ```
 
-**Ranking Algorithm**:
-1. Calculate frequency across sources (weight: 0.3)
-2. Calculate recency (weight: 0.2)
-3. Calculate domain relevance match (weight: 0.4)
-4. Calculate engagement potential (weight: 0.1)
-5. Return top 10 trends sorted by combined score
+**Ranking Process**:
+1. Build prompt with profile context and articles
+2. LLM analyzes relevance to user's domains and audience
+3. Returns top N articles with scores and suggested angles
+4. Provides reasoning for each ranking
 
-### 7. Content Strategy Agent (Reused)
+### 7. Content Strategy Agent (Enhanced)
 
 **Responsibility**: Generate 3 diverse post options with different angles
 
 **Interface** (from existing implementation):
 ```python
 class ContentStrategyAgent(LinkedInAgent):
-    def execute(context: ProfileContext, memory: MemoryStore) -> AgentOutput
+    def execute(
+        context: ProfileContext,
+        memory: ProfileMemoryStore,
+        trending_articles: List[RankedArticle] = None
+    ) -> AgentOutput
     def validate_output(output: AgentOutput) -> ValidationResult
 ```
+
+**Enhancements**:
+- Accepts `trending_articles` parameter
+- Instructs LLM that at least ONE of 3 options should be based on a trending article
+- Includes article context in prompt generation
 
 **Output Structure**:
 ```python
@@ -389,20 +435,31 @@ class PostOption:
     target_audience: str
     content_theme: str
     estimated_engagement: str
+    related_article: Optional[RankedArticle]  # NEW: Link to trending article if used
 ```
 
-**No modifications needed** - existing implementation already provides the required functionality.
-
-### 8. Drafting Agent (Reused)
+### 8. Drafting Agent (Enhanced)
 
 **Responsibility**: Convert selected post option into polished LinkedIn post
 
 **Interface** (from existing implementation):
 ```python
 class DraftingAgent(LinkedInAgent):
-    def execute(context: ProfileContext, memory: MemoryStore, content_idea: Dict) -> AgentOutput
+    def execute(
+        context: ProfileContext,
+        memory: ProfileMemoryStore,
+        content_idea: Dict
+    ) -> AgentOutput
     def validate_output(output: AgentOutput) -> ValidationResult
 ```
+
+**Enhancements**:
+- Retrieves historical posts for style matching AND content awareness
+- Retrieves rejected posts to avoid similar angles/topics
+- Retrieves style analysis for pattern matching
+- Retrieves content intelligence for strategic direction
+- Strengthened character limit enforcement (800-1300 chars HARD LIMIT)
+- Includes rejected posts as negative examples in prompt
 
 **Output Structure**:
 ```python
@@ -421,9 +478,8 @@ class LinkedInPost:
     estimated_length: int
     tone_analysis: Dict[str, Any]
     formatting_notes: List[str]
+    related_article: Optional[RankedArticle]  # NEW: Article link if post is based on trend
 ```
-
-**No modifications needed** - existing implementation handles style matching and formatting.
 
 
 ### 9. Content Orchestrator (New Component)
@@ -435,17 +491,17 @@ class LinkedInPost:
 class ContentOrchestrator:
     def __init__(
         profile_manager: ProfileManager,
-        memory_store: MemoryStore,
+        profile_store: ProfileMemoryStore,
         content_strategy_agent: ContentStrategyAgent,
         drafting_agent: DraftingAgent,
-        trend_monitor: TrendMonitor,
+        llm_factory: LLMFactory,
         telegram_bot: TelegramBot
     )
     
     async def generate_daily_post(profile_id: str) -> DailyPostResult
-    async def check_generation_limit(profile_id: str) -> bool
-    async def select_best_option(options: List[PostOption], profile: ProfileConfig) -> PostOption
-    async def deliver_to_telegram(post: LinkedInPost, profile_id: str) -> bool
+    async def _get_trending_topics() -> List[RankedArticle]
+    async def _select_best_option(options: List[PostOption], profile: ProfileConfig) -> PostOption
+    async def _deliver_to_telegram(post: LinkedInPost, profile_id: str, article: Optional[RankedArticle]) -> bool
 ```
 
 **Workflow**:
@@ -453,25 +509,27 @@ class ContentOrchestrator:
 sequenceDiagram
     participant DS as Daily Scheduler
     participant CO as Content Orchestrator
-    participant TM as Trend Monitor
+    participant TS as Trend Scanner
+    participant TR as Trend Ranker
     participant CS as Content Strategy
     participant DA as Drafting Agent
     participant TB as Telegram Bot
-    participant MS as Memory Store
+    participant PMS as Profile Memory Store
     
     DS->>CO: Trigger daily generation
-    CO->>MS: Check generation limit (1/day)
-    MS-->>CO: Limit OK
-    CO->>TM: Get trending topics
-    TM-->>CO: Top 10 trends
-    CO->>CS: Generate 3 post options
+    CO->>TS: Scan trending articles
+    TS-->>CO: Raw articles
+    CO->>TR: Rank by relevance
+    TR-->>CO: Top 3 ranked articles
+    CO->>CS: Generate 3 post options (with trends)
     CS-->>CO: 3 diverse options
     CO->>CO: Select best option
     CO->>DA: Draft final post
     DA-->>CO: Polished LinkedIn post
-    CO->>TB: Deliver via Telegram
+    CO->>PMS: Save pending draft
+    CO->>TB: Deliver via Telegram (post + article link)
     TB-->>CO: Delivery confirmed
-    CO->>MS: Log generation event
+    CO->>PMS: Log generation event
 ```
 
 **Data Structures**:
@@ -487,9 +545,9 @@ class DailyPostResult:
     timestamp: datetime
 ```
 
-### 10. Telegram Bot (Adapted from Existing)
+### 10. Telegram Bot (Enhanced)
 
-**Responsibility**: Deliver post drafts to user via Telegram
+**Responsibility**: Deliver post drafts to user via Telegram and handle user feedback
 
 **Interface**:
 ```python
@@ -497,40 +555,52 @@ class TelegramBot:
     def __init__(config: TelegramConfig)
     
     async def connect() -> bool
-    async def send_post_draft(post: LinkedInPost, profile_id: str) -> bool
-    async def send_alert(message: str) -> bool
-    async def handle_user_feedback(update: Dict) -> FeedbackData
+    async def disconnect() -> None
+    async def send_post_draft(post: LinkedInPost, profile_id: str, article: Optional[RankedArticle]) -> bool
+    async def send_message(message: str) -> bool
+    async def poll_updates() -> List[Dict]
+    async def _handle_text_message(message: Dict) -> None
 ```
 
-**Adaptations from Original**:
-- Remove approval workflow (no auto-posting)
-- Simplify to delivery-only mode
-- Add copy-paste optimized formatting
-- Add manual posting instructions
-- Add feedback mechanism for tracking posted/skipped
+**Enhancements**:
+- Split delivery into two messages:
+  1. Clean post content (copy-paste ready, no heading)
+  2. Metadata and action instructions
+- Article link sent as separate message when present
+- User feedback commands: `/posted`, `/skip`, `/regenerate`
+- Async connection handling with proper cleanup
 
 **Message Format**:
 ```
-📝 Daily LinkedIn Post Draft
-
+Message 1 (Post Content):
 {post_content}
 
 {hashtags}
 
+📎 Related article link in comments  [if article present]
+
+Message 2 (Metadata):
 📊 Metadata:
 • Theme: {content_theme}
 • Tone: {tone}
 • Length: {character_count} chars
-• Estimated Engagement: {engagement_type}
 
-📋 Instructions:
-1. Review the content above
-2. Copy and paste to LinkedIn
-3. Reply /posted to track in history
-4. Reply /skip to skip this draft
+📋 Commands:
+/posted - Save to history
+/skip - Reject this draft
+/regenerate - Keep topic, new draft
 
-Generated: {timestamp}
+Message 3 (Article Link, if present):
+📎 Related Article:
+{article_title}
+Source: {article_source}
+{article_url}
 ```
+
+**User Feedback Workflow**:
+- `/posted`: Pops oldest draft from queue → Saves to posts.json
+- `/skip`: Pops oldest draft → Saves to rejected_posts.json with reason
+- `/regenerate`: Peeks draft → Regenerates with same topic → Replaces in queue
 
 
 ### 11. Daily Scheduler (Adapted from Existing)
@@ -549,7 +619,7 @@ class DailyScheduler:
 ```
 
 **Adaptations from Original**:
-- Simplify to daily-only scheduling (no comment monitoring, feed scanning)
+- Simplify to daily-only scheduling
 - Support multiple posting windows per day
 - Support skip days (weekends, holidays)
 - Enforce 1 post per day limit
@@ -597,6 +667,8 @@ class ProviderConfig:
     region: Optional[str]
 ```
 
+**Primary Provider**: AWS Bedrock Claude Sonnet 4.5 (inference profile: `us.anthropic.claude-sonnet-4-5-20250929-v1:0`)
+
 **No modifications needed** - existing implementation provides required functionality.
 
 ## Data Models
@@ -604,10 +676,9 @@ class ProviderConfig:
 ### Profile Configuration
 
 ```yaml
-# profiles/my-profile.yaml
+# profiles/active/my-profile.yaml
 profile_id: "my-profile"
 name: "My Professional Profile"
-description: "Senior Software Engineer profile"
 version: 1
 enabled: true
 created_at: "2024-01-15T10:00:00Z"
@@ -615,114 +686,225 @@ last_updated: "2024-01-15T10:00:00Z"
 
 identity:
   headline: "Senior Software Engineer | Cloud Architecture | AI/ML"
+  current_role: "Senior SDE at AWS"
   seniority: "senior"
+  
+focus_areas:
   primary_domains:
-    - "Cloud Computing"
-    - "Machine Learning"
-    - "Software Architecture"
-  target_audience: "Software engineers and tech leaders"
-  positioning: "Practical insights on building scalable systems"
-  excluded_topics:
+    - "Data Engineering"
+    - "Software Development"
+    - "AWS"
+    - "Big Data"
+  secondary_domains:
+    - "Career Development"
+    - "Technical Leadership"
+  
+target_audience: "Software engineers, data engineers, and tech professionals"
+
+writing_style:
+  tone: "Professional yet approachable"
+  voice: "First-person, experience-based"
+  vocabulary: "Technical but accessible"
+  sentence_structure: "Mix of short and medium sentences"
+  
+content_preferences:
+  post_types:
+    - "Technical insights"
+    - "Career lessons"
+    - "Industry trends"
+  avoid_topics:
     - "Politics"
     - "Religion"
     - "Controversial social issues"
-
-behavior:
-  active_topics:
-    - "AWS architecture patterns"
-    - "ML model deployment"
-    - "Team leadership"
-  hook_patterns:
-    - "Personal experience story"
-    - "Contrarian take"
-    - "Practical tip"
+  
+posting_schedule:
   posting_windows:
     - start_hour: 9
       end_hour: 11
     - start_hour: 14
       end_hour: 16
-  emoji_frequency: "moderate"
-  comment_depth: "detailed"
-  vocabulary_bias: "professional"
-  engagement_style: "thoughtful"
+  skip_days: [5, 6]  # Saturday, Sunday
 ```
 
+### Profile Memory Storage
 
-### Memory Events
+**Directory Structure**:
+```
+data/memory/{profile_id}/
+├── posts.json              # Historical posts
+├── style_analysis.json     # Writing style patterns
+├── content_intelligence.json  # Strategic insights
+├── pending_drafts.json     # FIFO queue of drafts
+├── rejected_posts.json     # Skipped drafts
+└── events.json            # System events log
+```
 
-```python
-# Post Draft Event
-{
+**posts.json**:
+```json
+[
+  {
     "id": "uuid",
-    "profile_id": "my-profile",
-    "event_type": "post_draft",
-    "timestamp": "2024-01-15T10:30:00Z",
-    "content": {
-        "post_content": "...",
-        "hashtags": ["#CloudComputing", "#AWS"],
-        "theme": "AWS Lambda best practices",
+    "content": "Post content...",
+    "hashtags": ["#AWS", "#DataEngineering"],
+    "published_date": "2024-01-15T10:00:00Z",
+    "engagement": {
+      "likes": 45,
+      "comments": 12,
+      "shares": 8
+    },
+    "metadata": {
+      "source": "manual_import",
+      "character_count": 850
+    }
+  }
+]
+```
+
+**style_analysis.json**:
+```json
+{
+  "analyzed_at": "2024-01-15T10:00:00Z",
+  "post_count": 96,
+  "patterns": {
+    "post_length": {
+      "min": 450,
+      "max": 1500,
+      "avg": 892,
+      "median": 850
+    },
+    "emoji_usage": {
+      "frequency": "moderate",
+      "avg_per_post": 2.3,
+      "common_emojis": ["💡", "🚀", "📊"]
+    },
+    "hashtag_usage": {
+      "avg_per_post": 4.2,
+      "common_tags": ["#AWS", "#DataEngineering", "#SoftwareDevelopment"]
+    },
+    "sentence_structure": {
+      "avg_length": 18.5,
+      "variance": 8.2
+    },
+    "opening_patterns": [
+      "Personal experience story",
+      "Question to audience",
+      "Contrarian observation"
+    ]
+  }
+}
+```
+
+**content_intelligence.json**:
+```json
+{
+  "analyzed_at": "2024-01-15T10:00:00Z",
+  "post_count": 96,
+  "rule_based": {
+    "themes": {
+      "software_development": 35,
+      "data_engineering": 28,
+      "career_development": 18,
+      "aws_cloud": 15
+    },
+    "engagement_patterns": {
+      "high_engagement_length": 892,
+      "best_posting_times": ["09:00-11:00", "14:00-16:00"]
+    },
+    "content_gaps": {
+      "technical_depth": ["Performance optimization", "Database internals"],
+      "career_development": ["Salary negotiation", "Interview preparation"]
+    }
+  },
+  "llm_insights": {
+    "unique_voice": "Pragmatic engineering focused on fundamentals over trends",
+    "core_beliefs": [
+      "Mastering fundamentals > chasing tools",
+      "Ownership leads to growth"
+    ],
+    "semantic_themes": [
+      "Fundamentals vs. Trends",
+      "Ownership and Responsibility",
+      "Learning and Growth"
+    ],
+    "strategic_opportunities": [
+      "Soft skills in technical roles",
+      "Case studies of failures",
+      "Mentorship experiences"
+    ]
+  },
+  "strategic_direction": {
+    "priority_topics": [
+      "Data pipeline optimization",
+      "Career growth strategies",
+      "AWS best practices"
+    ],
+    "content_angles": [
+      "Personal lessons learned",
+      "Practical how-to guides",
+      "Industry trend analysis"
+    ]
+  }
+}
+```
+
+**pending_drafts.json** (FIFO Queue):
+```json
+[
+  {
+    "draft": {
+      "content": "Post content...",
+      "hashtags": ["#AWS", "#DataEngineering"],
+      "metadata": {
+        "theme": "AWS Lambda optimization",
         "tone": "professional",
-        "length": 850
+        "length": 1050
+      }
     },
-    "metrics": {
-        "options_generated": 3,
-        "confidence_score": 0.87
-    }
-}
+    "content_idea": {
+      "angle": "Cost optimization strategies",
+      "hook": "Personal experience with Lambda costs",
+      "target_audience": "Cloud engineers"
+    },
+    "related_article": {
+      "title": "New AWS Lambda pricing model",
+      "url": "https://...",
+      "source": "TechCrunch"
+    },
+    "created_at": "2024-01-15T10:00:00Z"
+  }
+]
+```
 
-# Post Published Event
-{
-    "id": "uuid",
-    "profile_id": "my-profile",
-    "event_type": "post_published",
-    "timestamp": "2024-01-15T11:00:00Z",
-    "content": {
-        "draft_id": "original-draft-uuid",
-        "post_url": "https://linkedin.com/posts/...",
-        "edited": false
+**rejected_posts.json**:
+```json
+[
+  {
+    "draft": {
+      "content": "Post content...",
+      "hashtags": ["#AWS"],
+      "metadata": {...}
     },
-    "metrics": {
-        "likes": 45,
-        "comments": 12,
-        "shares": 8,
-        "impressions": 2500
-    }
-}
-
-# Trend Detected Event
-{
-    "id": "uuid",
-    "profile_id": "my-profile",
-    "event_type": "trend_detected",
-    "timestamp": "2024-01-15T09:00:00Z",
-    "content": {
-        "topic": "Serverless cost optimization",
-        "sources": ["linkedin", "hackernews"],
-        "related_hashtags": ["#Serverless", "#CostOptimization"],
-        "sample_content": "..."
-    },
-    "metrics": {
-        "frequency": 15,
-        "relevance_score": 0.92
-    }
-}
+    "reason": "user_skipped",
+    "rejected_at": "2024-01-15T11:00:00Z"
+  }
+]
 ```
 
 ### Configuration File
 
-```python
-# config.yaml
+```yaml
+# config/config.yaml
 system:
   environment: "production"
   log_level: "INFO"
   data_dir: "./data"
 
 profiles:
-  directory: "./profiles"
+  directory: "./profiles/active"
   auto_load: true
 
 memory:
-  storage_type: "json"  # json, sqlite, postgresql
+  storage_type: "json"
   directory: "./data/memory"
   retention_days: 90
 
@@ -733,31 +915,24 @@ scheduler:
 
 llm:
   primary_provider: "bedrock_claude"
-  primary_model: "anthropic.claude-3-sonnet-20240229-v1:0"
+  primary_model: "us.anthropic.claude-sonnet-4-5-20250929-v1:0"  # Inference profile
   fallback_enabled: true
   temperature: 0.75
   max_tokens: 2000
+  region: "us-west-2"
 
 telegram:
   enabled: true
   bot_token: "${TELEGRAM_BOT_TOKEN}"
   chat_id: "${TELEGRAM_CHAT_ID}"
-  parse_mode: "HTML"
 
-feed_scanner:
-  enabled: true
-  max_posts_per_session: 50
-  delay_between_reads: 3  # seconds
-  scan_interval_hours: 6
-
-web_scraper:
+trends:
   enabled: true
   sources:
-    - "https://news.ycombinator.com"
-    - "https://techcrunch.com"
+    - "hackernews"
+    - "techcrunch"
+  top_n: 3
   request_timeout: 30
-  rate_limit_delay: 5
-  respect_robots_txt: true
 
 safety:
   max_posts_per_day: 1
@@ -765,6 +940,133 @@ safety:
   store_linkedin_credentials: false
   enable_rate_limiting: true
 ```
+
+### CLI Commands
+
+```bash
+# Generate a single post
+python3 -m linkedin_content_assistant.main generate-once --profile {profile_id}
+
+# Listen for Telegram commands (/posted, /skip, /regenerate)
+python3 -m linkedin_content_assistant.main listen --profile {profile_id}
+
+# Import LinkedIn post history
+python3 -m linkedin_content_assistant.main import-history --profile {profile_id} --file posts.json
+
+# Analyze content intelligence
+python3 -m linkedin_content_assistant.main analyze-content --profile {profile_id} [--refresh]
+
+# View profile statistics
+python3 -m linkedin_content_assistant.main profile-stats --profile {profile_id}
+
+# Migrate data from old format to profile-specific structure
+python3 -m linkedin_content_assistant.main migrate-data --profile {profile_id}
+```
+
+
+## Implemented Features
+
+### LinkedIn Post History Import System
+
+**Browser-Based Extraction**: Safe, manual approach using browser console scripts
+- `tools/linkedin_post_extractor.html`: Extracts regular posts from activity feed
+- `tools/linkedin_newsletter_extractor.html`: Extracts newsletter articles
+- Scripts scroll through profile, extract all posts, download as JSON
+- User imports via CLI: `import-history --profile {id} --file posts.json`
+
+**Benefits**:
+- No LinkedIn API credentials needed
+- No risk of account restrictions
+- User maintains full control
+- One-time manual process
+
+### Profile-Specific Storage Structure
+
+**Migration from Single File**: Moved from `data/memory/events.json` to profile-specific directories
+- Each profile has isolated directory: `data/memory/{profile_id}/`
+- Separate files: `posts.json`, `style_analysis.json`, `content_intelligence.json`, `pending_drafts.json`, `rejected_posts.json`, `events.json`
+- Easy multi-profile support
+- Better organization and scalability
+- Simple backup/restore per profile
+
+### Content Intelligence System
+
+**Hybrid Analysis Approach**: Combines fast rule-based analysis with deep LLM insights
+
+**Rule-Based Analysis** (Always runs, cached):
+- Content themes and topic clusters
+- Engagement patterns (character count, hashtag usage)
+- Content evolution tracking
+- Knowledge domains identification
+- Audience insights
+- Content gaps identification
+- Successful patterns (opening styles, structures, CTAs)
+
+**LLM Deep Analysis** (Optional, cached):
+- Unique voice and positioning
+- Core beliefs and values
+- Semantic themes beyond keywords
+- Engagement drivers
+- Strategic opportunities
+- Quality patterns
+
+**Strategic Direction**: Priority topics, content angles, audience alignment, format suggestions
+
+### Trending Articles Integration
+
+**Multi-Source Scanning**:
+- Hacker News (via API)
+- TechCrunch (via web scraping)
+- Async HTTP requests with aiohttp
+- Article content fetching for context
+
+**LLM-Based Ranking**:
+- Ranks articles by relevance to user profile
+- Returns top 3 with relevance scores
+- Provides suggested content angles
+- Includes reasoning for each ranking
+
+**Content Generation Integration**:
+- At least ONE of 3 post options based on trending article
+- Article link sent separately in Telegram
+- User can post link as comment on LinkedIn
+
+### User Feedback Commands
+
+**Three-Command System**:
+
+1. `/posted`: Saves draft to history
+   - Pops oldest draft from pending queue
+   - Adds to `posts.json` with timestamp
+   - Clears from pending drafts
+
+2. `/skip`: Rejects draft
+   - Pops oldest draft from pending queue
+   - Saves to `rejected_posts.json` with reason
+   - LLM learns from rejected posts to avoid similar angles
+
+3. `/regenerate`: New draft, same topic
+   - Keeps same topic/angle
+   - Generates new execution
+   - Replaces draft in queue
+   - Useful when direction is good but execution needs work
+
+**FIFO Queue System**: Supports multiple pending drafts without loss
+
+### Character Limit Enforcement
+
+**Strengthened Prompt Engineering**:
+- System prompt: "⚠️ CRITICAL: Post content MUST be 800-1300 characters (HARD LIMIT)"
+- Explicit character limit section in user prompt
+- LLM generates within limits from the start
+- Relaxed validation tolerance (500 chars) for edge cases
+
+### AWS Bedrock Integration
+
+**Primary LLM Provider**: AWS Bedrock Claude Sonnet 4.5
+- Model: `us.anthropic.claude-sonnet-4-5-20250929-v1:0` (inference profile)
+- Fixed API format: separate `system` parameter (not in messages array)
+- Proper error handling and fallback support
 
 
 ## Correctness Properties
