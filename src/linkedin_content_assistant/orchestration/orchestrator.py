@@ -116,13 +116,17 @@ class ContentOrchestrator:
             profile = self.profile_manager.load_profile(profile_id)
             context = self._create_profile_context(profile)
             
-            # Step 3: Get trending topics (stub for MVP)
+            # Step 3: Get trending topics
             trending_topics = await self._get_trending_topics(profile_id)
             logger.info(f"Retrieved {len(trending_topics)} trending topics")
             
-            # Step 4: Generate 3 post options via ContentStrategy
+            # Step 4: Generate 3 post options via ContentStrategy (with trending articles)
             logger.info("Generating content strategy options...")
-            strategy_output = await self.content_strategy_agent.execute(context, self.memory_store)
+            strategy_output = await self.content_strategy_agent.execute(
+                context, 
+                self.memory_store,
+                trending_articles=trending_topics
+            )
             
             # Validate strategy output
             validation = self.content_strategy_agent.validate_output(strategy_output)
@@ -143,12 +147,18 @@ class ContentOrchestrator:
             post_options = strategy_output.content.get("post_options", [])
             logger.info(f"Generated {len(post_options)} post options")
             
+            # Log first option to debug article_reference
+            if post_options:
+                logger.info(f"First option keys: {list(post_options[0].keys())}")
+                logger.info(f"First option article_reference: {post_options[0].get('article_reference', 'KEY_MISSING')}")
+            
             # Store all options in memory
             await self._store_post_options(profile_id, post_options, strategy_output)
             
             # Step 5: Select best option
             selected_option = await self.select_best_option(post_options, profile)
             logger.info(f"Selected option with theme: {selected_option.get('content_theme', 'unknown')}")
+            logger.info(f"Selected option article_reference: {selected_option.get('article_reference', 'None')}")
             
             # Step 6: Draft final post via Drafting agent
             logger.info("Drafting final post...")
@@ -180,8 +190,9 @@ class ContentOrchestrator:
             # Store draft in memory
             await self._store_post_draft(profile_id, linkedin_post, selected_option, drafting_output)
             
-            # Step 7: Deliver to Telegram (stub for MVP)
-            delivery_success = await self.deliver_to_telegram(linkedin_post, profile_id)
+            # Step 7: Deliver to Telegram (with trending article if available)
+            trending_article = trending_topics[0] if trending_topics else None
+            delivery_success = await self.deliver_to_telegram(linkedin_post, profile_id, trending_article)
             delivery_status = "delivered" if delivery_success else "delivery_pending"
             
             logger.info(f"Daily post generation completed successfully for profile: {profile_id}")
@@ -292,13 +303,15 @@ class ContentOrchestrator:
     async def deliver_to_telegram(
         self, 
         post: LinkedInPost, 
-        profile_id: str
+        profile_id: str,
+        trending_article: Optional[Dict[str, Any]] = None
     ) -> bool:
         """Deliver post draft to Telegram for manual posting.
         
         Args:
             post: LinkedIn post to deliver
             profile_id: Profile identifier
+            trending_article: Optional trending article reference
             
         Returns:
             True if delivery successful, False otherwise
@@ -313,8 +326,8 @@ class ContentOrchestrator:
             
             logger.info(f"Delivering post to Telegram for profile: {profile_id}")
             
-            # Send post draft via Telegram
-            success = await self.telegram_bot.send_post_draft(post, profile_id)
+            # Send post draft via Telegram (with optional article reference)
+            success = await self.telegram_bot.send_post_draft(post, profile_id, trending_article)
             
             if success:
                 logger.info(f"Successfully delivered post to Telegram for profile: {profile_id}")
@@ -348,20 +361,49 @@ class ContentOrchestrator:
         )
     
     async def _get_trending_topics(self, profile_id: str) -> List[Dict[str, Any]]:
-        """Get trending topics from TrendMonitor.
+        """Get trending topics and rank them by relevance to profile.
         
-        Stub for MVP - will be implemented in Task 7.
+        Args:
+            profile_id: Profile identifier
+            
+        Returns:
+            List of ranked trending articles with relevance scores
         """
-        if self.trend_monitor is None:
-            logger.info("Trend monitor not configured - returning empty trends")
-            return []
-        
         try:
-            # TODO: Implement actual trend retrieval in Task 7
-            # trends = await self.trend_monitor.get_trending_topics(profile_id, hours=24)
-            return []
+            from ..trends.scanner import TrendScanner
+            from ..trends.ranker import TrendRanker
+            
+            # Load profile for ranking
+            profile = self.profile_manager.load_profile(profile_id)
+            profile_dict = {
+                "name": profile.name,
+                "title": profile.identity.headline,
+                "focus_areas": profile.identity.primary_domains,
+                "target_audience": profile.identity.target_audience
+            }
+            
+            # Scan trending articles
+            logger.info("Scanning trending tech articles...")
+            async with TrendScanner(max_articles=10) as scanner:
+                articles = await scanner.scan_all_sources()
+            
+            if not articles:
+                logger.warning("No trending articles found")
+                return []
+            
+            logger.info(f"Found {len(articles)} trending articles")
+            
+            # Rank articles by relevance to profile
+            logger.info("Ranking articles by relevance to profile...")
+            ranker = TrendRanker(self.content_strategy_agent.llm_factory)
+            ranked_articles = await ranker.rank_articles(articles, profile_dict, top_n=3)
+            
+            logger.info(f"Selected top {len(ranked_articles)} relevant articles")
+            
+            return ranked_articles
+            
         except Exception as e:
-            logger.warning(f"Failed to get trending topics: {e}")
+            logger.error(f"Failed to get trending topics: {e}", exc_info=True)
             return []
     
     async def _store_post_options(
@@ -553,5 +595,6 @@ class ContentOrchestrator:
             call_to_action=post_dict.get('call_to_action'),
             estimated_length=post_dict.get('estimated_length', 0),
             tone_analysis=post_dict.get('tone_analysis', {}),
-            formatting_notes=post_dict.get('formatting_notes', [])
+            formatting_notes=post_dict.get('formatting_notes', []),
+            article_reference=post_dict.get('article_reference')
         )

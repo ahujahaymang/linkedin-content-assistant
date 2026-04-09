@@ -58,12 +58,13 @@ class ContentStrategyAgent(StatelessAgentMixin, LinkedInAgent):
         super().__init__(AgentType.CONTENT_STRATEGY)
         self.llm_factory = llm_factory
     
-    async def execute(self, context: ProfileContext, memory: Any) -> AgentOutput:
+    async def execute(self, context: ProfileContext, memory: Any, trending_articles: List[Dict[str, Any]] = None) -> AgentOutput:
         """Generate 3 post options aligned with profile context.
         
         Args:
             context: Profile-specific context and configuration
             memory: Memory store for retrieving relevant history
+            trending_articles: Optional list of ranked trending articles
             
         Returns:
             AgentOutput with 3 post options and metadata
@@ -75,8 +76,8 @@ class ContentStrategyAgent(StatelessAgentMixin, LinkedInAgent):
             # Build system prompt for content strategy
             system_prompt = self._build_system_prompt(context)
             
-            # Build user prompt with context and history
-            user_prompt = self._build_user_prompt(context, recent_content)
+            # Build user prompt with context, history, and trends
+            user_prompt = self._build_user_prompt(context, recent_content, trending_articles)
             
             # Generate content strategy using LLM
             response = await self.llm_factory.generate_with_system(
@@ -98,7 +99,8 @@ class ContentStrategyAgent(StatelessAgentMixin, LinkedInAgent):
                     "llm_model": response.model,
                     "profile_id": context.profile_id,
                     "profile_version": context.version,
-                    "content_history_count": len(recent_content)
+                    "content_history_count": len(recent_content),
+                    "trending_articles_count": len(trending_articles) if trending_articles else 0
                 },
                 requires_approval=True,
                 confidence_score=self._calculate_confidence_score(strategy_output, context)
@@ -251,7 +253,8 @@ OUTPUT FORMAT: Return a valid JSON object with this exact structure:
             "hook": "The opening hook to grab attention",
             "target_audience": "Specific audience segment this targets",
             "content_theme": "The main theme or topic category",
-            "estimated_engagement": "Expected engagement type (discussion/shares/reactions)"
+            "estimated_engagement": "Expected engagement type (discussion/shares/reactions)",
+            "article_reference": {{"title": "Article title", "url": "Article URL"}} or null
         }},
         // ... 2 more options
     ],
@@ -261,11 +264,66 @@ OUTPUT FORMAT: Return a valid JSON object with this exact structure:
         "audience_relevance": "Why these will resonate with target audience",
         "domain_expertise": "How options showcase domain knowledge"
     }}
+}}
+
+EXAMPLE with article reference:
+{{
+    "post_options": [
+        {{
+            "angle": "How this trend impacts our daily work",
+            "hook": "Everyone's talking about X, but here's what matters",
+            "target_audience": "Senior engineers",
+            "content_theme": "Technical trends",
+            "estimated_engagement": "discussion",
+            "article_reference": {{"title": "The Future of AI Coding", "url": "https://example.com/article"}}
+        }}
+    ]
+}}
+
+EXAMPLE without article reference:
+{{
+    "post_options": [
+        {{
+            "angle": "Lessons from production incident",
+            "hook": "Last week our system went down",
+            "target_audience": "Engineering leaders",
+            "content_theme": "Reliability",
+            "estimated_engagement": "shares",
+            "article_reference": null
+        }}
+    ]
 }}"""
     
-    def _build_user_prompt(self, context: ProfileContext, recent_content: List[Dict[str, Any]]) -> str:
-        """Build user prompt with context and recent content history."""
+    def _build_user_prompt(self, context: ProfileContext, recent_content: List[Dict[str, Any]], trending_articles: List[Dict[str, Any]] = None) -> str:
+        """Build user prompt with context, recent content history, and trending articles."""
         prompt = "Generate 3 diverse LinkedIn post options for this professional profile."
+        
+        # Add trending articles if available
+        if trending_articles:
+            prompt += "\n\n=== TRENDING TECH ARTICLES ===\n"
+            prompt += "Consider these trending articles for inspiration. Pick the MOST relevant one and create a post that:\n"
+            prompt += "- Shares your unique perspective based on your experience\n"
+            prompt += "- Adds value beyond just summarizing the article\n"
+            prompt += "- Connects the trend to practical lessons or insights\n"
+            prompt += "- IMPORTANT: If a post option is based on an article, include the article_reference field with title and URL\n\n"
+            
+            for i, ranked_article in enumerate(trending_articles, 1):
+                article = ranked_article.get('article')
+                if article:
+                    prompt += f"[Article {i}]\n"
+                    prompt += f"Title: {article.title}\n"
+                    prompt += f"Source: {article.source}\n"
+                    prompt += f"URL: {article.url}\n"
+                    if article.summary:
+                        prompt += f"Summary: {article.summary}\n"
+                    prompt += f"Relevance Score: {ranked_article.get('relevance_score', 0)}/100\n"
+                    prompt += f"Why Relevant: {ranked_article.get('reasoning', 'N/A')}\n"
+                    prompt += f"Suggested Angle: {ranked_article.get('content_angle', 'N/A')}\n\n"
+            
+            prompt += "NOTE: At least ONE of the 3 post options should be based on a trending article.\n"
+            prompt += "For article-based posts, set article_reference to {{\"title\": \"<article title>\", \"url\": \"<article url>\"}}.\n"
+            prompt += "For non-article posts, set article_reference to null.\n"
+            prompt += "\nCRITICAL: ALL 3 post options MUST include the article_reference field (either with article data or null).\n"
         
         if recent_content:
             recent_themes = []

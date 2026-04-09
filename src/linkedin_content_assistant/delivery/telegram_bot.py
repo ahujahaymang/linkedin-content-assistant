@@ -121,7 +121,8 @@ class TelegramBot:
     async def send_post_draft(
         self,
         post: LinkedInPost,
-        profile_id: str
+        profile_id: str,
+        trending_article: Optional[Dict[str, Any]] = None
     ) -> bool:
         """
         Send a post draft via Telegram.
@@ -129,6 +130,7 @@ class TelegramBot:
         Args:
             post: The LinkedIn post to deliver
             profile_id: Profile ID for tracking
+            trending_article: Optional trending article data
             
         Returns:
             True if message sent successfully
@@ -140,11 +142,30 @@ class TelegramBot:
             raise RuntimeError("Telegram bot not connected")
         
         try:
+            # Add article reference note to post content if trending article exists
+            post_content = post.content
+            if trending_article:
+                article = trending_article.get('article')
+                if article and not post_content.endswith("comments"):
+                    # Add natural text about article link
+                    post_content += "\n\n📎 Related article link in comments"
+            
+            # Create a modified post with the updated content
+            modified_post = LinkedInPost(
+                content=post_content,
+                hashtags=post.hashtags,
+                call_to_action=post.call_to_action,
+                estimated_length=len(post_content),
+                tone_analysis=post.tone_analysis,
+                formatting_notes=post.formatting_notes,
+                article_reference=post.article_reference
+            )
+            
             # Format the post content message (copyable)
-            post_message = self._format_post_content(post)
+            post_message = self._format_post_content(modified_post)
             
             # Format the metadata message (separate)
-            metadata_message = self._format_metadata(post, profile_id)
+            metadata_message = self._format_metadata(modified_post, profile_id)
             
             # Send post content first
             success1 = await self._send_message_with_retry(
@@ -161,6 +182,24 @@ class TelegramBot:
                 self.config.chat_id,
                 metadata_message
             )
+            
+            # Send article link if present (third message)
+            success3 = True
+            if trending_article:
+                article = trending_article.get('article')
+                if article:
+                    article_data = {
+                        'title': article.title,
+                        'url': article.url,
+                        'source': article.source
+                    }
+                    article_message = self._format_article_link(article_data)
+                    success3 = await self._send_message_with_retry(
+                        self.config.chat_id,
+                        article_message
+                    )
+                    if not success3:
+                        self.logger.warning(f"Failed to send article link for profile {profile_id}")
             
             if success2:
                 self.logger.info(f"Sent post draft for profile {profile_id}")
@@ -281,6 +320,27 @@ class TelegramBot:
         message += "\n💡 <b>Actions:</b>\n"
         message += "• Reply /posted after posting to LinkedIn\n"
         message += "• Reply /skip to skip this draft"
+        
+        return message
+    
+    def _format_article_link(self, article_data: Dict[str, str]) -> str:
+        """
+        Format article link for posting as a comment.
+        
+        Args:
+            article_data: Dictionary with 'title', 'url', and 'source'
+            
+        Returns:
+            Formatted article link message
+        """
+        title = article_data.get('title', 'Article')
+        url = article_data.get('url', '')
+        source = article_data.get('source', 'Web')
+        
+        message = "🔗 <b>Article Link</b>\n\n"
+        message += f"<b>{title}</b>\n"
+        message += f"Source: {source.title()}\n\n"
+        message += f"{url}\n\n"
         
         return message
     

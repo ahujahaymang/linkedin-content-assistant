@@ -24,6 +24,7 @@ class ContentIdea:
     content_theme: str
     estimated_engagement: str
     additional_context: Optional[str] = None
+    article_reference: Optional[Dict[str, str]] = None  # {"title": "...", "url": "..."}
     
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> 'ContentIdea':
@@ -34,7 +35,8 @@ class ContentIdea:
             target_audience=data.get("target_audience", ""),
             content_theme=data.get("content_theme", ""),
             estimated_engagement=data.get("estimated_engagement", ""),
-            additional_context=data.get("additional_context")
+            additional_context=data.get("additional_context"),
+            article_reference=data.get("article_reference")
         )
 
 
@@ -47,6 +49,7 @@ class LinkedInPost:
     estimated_length: int
     tone_analysis: Dict[str, Any]
     formatting_notes: List[str]
+    article_reference: Optional[Dict[str, str]] = None  # {"title": "...", "url": "..."}
     
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary representation."""
@@ -56,7 +59,8 @@ class LinkedInPost:
             "call_to_action": self.call_to_action,
             "estimated_length": self.estimated_length,
             "tone_analysis": self.tone_analysis,
-            "formatting_notes": self.formatting_notes
+            "formatting_notes": self.formatting_notes,
+            "article_reference": self.article_reference
         }
 
 
@@ -490,6 +494,16 @@ CONTENT IDEA:
         if idea.additional_context:
             prompt += f"\n- Additional Context: {idea.additional_context}"
         
+        # Check if this idea references an article
+        article_ref = getattr(idea, 'article_reference', None)
+        if article_ref and isinstance(article_ref, dict):
+            prompt += f"\n\nARTICLE REFERENCE:"
+            prompt += f"\n- Title: {article_ref.get('title', 'N/A')}"
+            prompt += f"\n- URL: {article_ref.get('url', 'N/A')}"
+            prompt += f"\n\nCRITICAL: This post is based on the article above."
+            prompt += f"\n- Add the line 'Link in comments' at the END of the post content (before hashtags)"
+            prompt += f"\n- This tells readers you'll post the article link as a comment"
+        
         # Add historical posts for BOTH style matching AND content awareness
         if historical_posts:
             prompt += f"\n\nHISTORICAL POSTS (match writing style AND avoid repeating these topics):\n"
@@ -655,7 +669,8 @@ Return only the JSON response with no additional text."""
                 call_to_action=post_data.get("call_to_action"),
                 estimated_length=post_data.get("estimated_length", len(post_data.get("content", ""))),
                 tone_analysis=post_data.get("tone_analysis", {}),
-                formatting_notes=post_data.get("formatting_notes", [])
+                formatting_notes=post_data.get("formatting_notes", []),
+                article_reference=original_idea.article_reference
             )
             
             return DraftingOutput(
