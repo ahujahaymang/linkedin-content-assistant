@@ -49,18 +49,20 @@ class BedrockClaudeClient(BaseLLMClient):
     async def generate_with_system(self, system_prompt: str, user_prompt: str, **kwargs) -> LLMResponse:
         """Generate response with system and user prompts."""
         try:
-            # Prepare the request body for Claude
-            messages = []
-            if system_prompt:
-                messages.append({"role": "system", "content": system_prompt})
-            messages.append({"role": "user", "content": user_prompt})
-            
+            # Prepare the request body for Claude on Bedrock
+            # Note: system prompt goes in a separate field, not in messages
             body = {
                 "anthropic_version": "bedrock-2023-05-31",
                 "max_tokens": kwargs.get('max_tokens', self.config.get('max_tokens', 4000)),
                 "temperature": kwargs.get('temperature', self.config.get('temperature', 0.7)),
-                "messages": messages
+                "messages": [
+                    {"role": "user", "content": user_prompt}
+                ]
             }
+            
+            # Add system prompt if provided
+            if system_prompt:
+                body["system"] = system_prompt
             
             # Make the API call
             response = await asyncio.get_event_loop().run_in_executor(
