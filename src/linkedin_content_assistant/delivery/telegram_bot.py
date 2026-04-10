@@ -145,8 +145,8 @@ class TelegramBot:
             # Add article reference note to post content if trending article exists
             post_content = post.content
             if trending_article:
-                article = trending_article.get('article')
-                if article and not post_content.endswith("comments"):
+                # trending_article is now a TrendingArticle object, not a dict
+                if not post_content.endswith("comments"):
                     # Add natural text about article link
                     post_content += "\n\n📎 Related article link in comments"
             
@@ -186,20 +186,19 @@ class TelegramBot:
             # Send article link if present (third message)
             success3 = True
             if trending_article:
-                article = trending_article.get('article')
-                if article:
-                    article_data = {
-                        'title': article.title,
-                        'url': article.url,
-                        'source': article.source
-                    }
-                    article_message = self._format_article_link(article_data)
-                    success3 = await self._send_message_with_retry(
-                        self.config.chat_id,
-                        article_message
-                    )
-                    if not success3:
-                        self.logger.warning(f"Failed to send article link for profile {profile_id}")
+                # trending_article is a TrendingArticle object
+                article_data = {
+                    'title': trending_article.title,
+                    'url': trending_article.url,
+                    'source': trending_article.source
+                }
+                article_message = self._format_article_link(article_data)
+                success3 = await self._send_message_with_retry(
+                    self.config.chat_id,
+                    article_message
+                )
+                if not success3:
+                    self.logger.warning(f"Failed to send article link for profile {profile_id}")
             
             if success2:
                 self.logger.info(f"Sent post draft for profile {profile_id}")

@@ -23,6 +23,7 @@ class PostOption:
     target_audience: str
     content_theme: str
     estimated_engagement: str
+    article_reference: Optional[Dict[str, str]] = None
     
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary representation."""
@@ -31,7 +32,8 @@ class PostOption:
             "hook": self.hook,
             "target_audience": self.target_audience,
             "content_theme": self.content_theme,
-            "estimated_engagement": self.estimated_engagement
+            "estimated_engagement": self.estimated_engagement,
+            "article_reference": self.article_reference
         }
 
 
@@ -428,7 +430,8 @@ EXAMPLE without article reference:
                     hook=option_data.get("hook", ""),
                     target_audience=option_data.get("target_audience", ""),
                     content_theme=option_data.get("content_theme", ""),
-                    estimated_engagement=option_data.get("estimated_engagement", "")
+                    estimated_engagement=option_data.get("estimated_engagement", ""),
+                    article_reference=option_data.get("article_reference")
                 )
                 post_options.append(post_option)
             

@@ -190,8 +190,20 @@ class ContentOrchestrator:
             # Store draft in memory
             await self._store_post_draft(profile_id, linkedin_post, selected_option, drafting_output)
             
-            # Step 7: Deliver to Telegram (with trending article if available)
-            trending_article = trending_topics[0] if trending_topics else None
+            # Step 7: Deliver to Telegram (with the article that was actually used in the post)
+            # Extract the article reference from the selected option
+            article_ref = selected_option.get('article_reference')
+            trending_article = None
+            
+            if article_ref and trending_topics:
+                # Find the matching trending article by URL
+                article_url = article_ref.get('url') if isinstance(article_ref, dict) else None
+                if article_url:
+                    for topic in trending_topics:
+                        if topic.get('article') and topic['article'].url == article_url:
+                            trending_article = topic['article']
+                            break
+            
             delivery_success = await self.deliver_to_telegram(linkedin_post, profile_id, trending_article)
             delivery_status = "delivered" if delivery_success else "delivery_pending"
             
@@ -335,12 +347,12 @@ class ContentOrchestrator:
                 
                 # Add draft to pending queue for /posted command (with content_idea for regeneration)
                 content_idea = {
-                    "angle": trending_article.get('suggested_angle', '') if trending_article else '',
+                    "angle": getattr(trending_article, 'suggested_angle', '') if trending_article else '',
                     "hook": '',  # Not stored separately
                     "target_audience": '',  # From profile
-                    "content_theme": trending_article.get('article', {}).get('title', '') if trending_article else '',
+                    "content_theme": trending_article.title if trending_article else '',
                     "estimated_engagement": '',
-                    "article_reference": trending_article.get('article') if trending_article else None
+                    "article_reference": trending_article.to_dict() if trending_article else None
                 }
                 
                 self.profile_store.add_pending_draft(
