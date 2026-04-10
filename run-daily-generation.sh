@@ -7,30 +7,29 @@ cd "$SCRIPT_DIR"
 # Log start time
 echo "$(date): Starting daily generation" >> logs/cron.log
 
-# Refresh AWS credentials
-echo "$(date): Refreshing AWS credentials..." >> logs/cron.log
-ada credentials update --account=271149161064 --provider=isengard --role=admin --once >> logs/cron.log 2>&1
-
-if [ $? -ne 0 ]; then
-    echo "$(date): ERROR - Failed to refresh AWS credentials" >> logs/cron.log
-    exit 1
-fi
-
-echo "$(date): AWS credentials refreshed successfully" >> logs/cron.log
-
-# Activate virtual environment if it exists
-if [ -f "venv/bin/activate" ]; then
-    source venv/bin/activate
-fi
+# Note: AWS credentials should be managed separately (e.g., via aws-vault or environment)
+# No automatic credential refresh in this script
 
 # Load environment variables
 if [ -f ".env" ]; then
     export $(cat .env | grep -v '^#' | xargs)
 fi
 
+# Use virtual environment Python
+PYTHON_BIN="$SCRIPT_DIR/venv/bin/python3"
+
+if [ ! -f "$PYTHON_BIN" ]; then
+    echo "$(date): ERROR - Virtual environment not found at $PYTHON_BIN" >> logs/cron.log
+    exit 1
+fi
+
+# First process any pending /posted messages
+echo "$(date): Processing pending Telegram messages..." >> logs/cron.log
+$PYTHON_BIN -m linkedin_content_assistant.main listen --once >> logs/cron.log 2>&1
+
 # Run the content generation
 echo "$(date): Running content generation..." >> logs/cron.log
-python3 -m linkedin_content_assistant.main generate-once --profile haymang >> logs/cron.log 2>&1
+$PYTHON_BIN -m linkedin_content_assistant.main generate-once --profile haymang >> logs/cron.log 2>&1
 
 if [ $? -eq 0 ]; then
     echo "$(date): Daily generation completed successfully" >> logs/cron.log

@@ -143,6 +143,9 @@ async def initialize_components(config: AppConfig) -> tuple:
         content_strategy_agent = ContentStrategyAgent(llm_factory)
         drafting_agent = DraftingAgent(llm_factory)
         logger.info("Content Agents initialized")
+        logger.info("=" * 80)
+        logger.info("ABOUT TO INITIALIZE TELEGRAM BOT - THIS LOG SHOULD APPEAR")
+        logger.info("=" * 80)
         
         # Initialize Telegram Bot (if enabled)
         telegram_bot = None
