@@ -501,37 +501,44 @@ class TelegramBot:
         self._polling = True
         self.logger.info("Started polling for Telegram updates")
         
-        while self._polling:
-            try:
-                updates = await self._get_updates()
-                
-                for update in updates:
-                    # Update offset for next poll
-                    self._update_offset = update.get("update_id", 0) + 1
+        try:
+            while self._polling:
+                try:
+                    updates = await self._get_updates()
                     
-                    # Handle the update
-                    feedback = await self.handle_user_feedback(update)
+                    for update in updates:
+                        # Update offset for next poll
+                        self._update_offset = update.get("update_id", 0) + 1
+                        
+                        # Handle the update
+                        feedback = await self.handle_user_feedback(update)
+                        
+                        if feedback:
+                            # Call the callback with feedback and draft (draft may be None)
+                            await callback(feedback, self._last_draft)
+                            
+                            # Clear the draft after processing
+                            if feedback.action == "posted":
+                                self._last_draft = None
+                            
+                            # Exit if requested and action was posted or skipped
+                            if exit_on_action and feedback.action in ["posted", "skipped"]:
+                                self.logger.info(f"Exiting after processing /{feedback.action}")
+                                self.stop_polling()
+                                return
                     
-                    if feedback and self._last_draft:
-                        # Call the callback with feedback and draft
-                        await callback(feedback, self._last_draft)
-                        
-                        # Clear the draft after processing
-                        if feedback.action == "posted":
-                            self._last_draft = None
-                        
-                        # Exit if requested and action was posted or skipped
-                        if exit_on_action and feedback.action in ["posted", "skipped"]:
-                            self.logger.info(f"Exiting after processing /{feedback.action}")
-                            self.stop_polling()
-                            return
-                
-                # Sleep briefly between polls
-                await asyncio.sleep(1)
-                
-            except Exception as e:
-                self.logger.error(f"Error during polling: {e}")
-                await asyncio.sleep(5)
+                    # Sleep briefly between polls
+                    await asyncio.sleep(1)
+                    
+                except asyncio.CancelledError:
+                    self.logger.info("Polling cancelled")
+                    self.stop_polling()
+                    raise
+                except Exception as e:
+                    self.logger.error(f"Error during polling: {e}")
+                    await asyncio.sleep(5)
+        finally:
+            self._polling = False
     
     def stop_polling(self) -> None:
         """Stop polling for updates."""

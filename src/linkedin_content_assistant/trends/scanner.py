@@ -130,27 +130,46 @@ class TrendScanner:
             
             soup = BeautifulSoup(html, 'html.parser')
             articles = []
+            seen_urls = set()
             
-            # Find article elements (TechCrunch structure)
-            article_elements = soup.find_all('article', limit=self.max_articles)
+            # TechCrunch uses h2 and h3 tags with links for article titles
+            # Find all h2 and h3 tags that contain links
+            heading_tags = soup.find_all(['h2', 'h3'])
             
-            for elem in article_elements:
-                try:
-                    # Extract title and link
-                    title_elem = elem.find('h2') or elem.find('h3')
-                    if not title_elem:
-                        continue
+            for heading in heading_tags:
+                if len(articles) >= self.max_articles:
+                    break
                     
-                    link_elem = title_elem.find('a')
+                try:
+                    # Find link within heading
+                    link_elem = heading.find('a')
                     if not link_elem:
                         continue
                     
-                    title = title_elem.get_text(strip=True)
                     url = link_elem.get('href', '')
+                    if not url or not url.startswith('http'):
+                        continue
                     
-                    # Extract summary if available
-                    summary_elem = elem.find('p')
-                    summary = summary_elem.get_text(strip=True) if summary_elem else None
+                    # Skip duplicates
+                    if url in seen_urls:
+                        continue
+                    seen_urls.add(url)
+                    
+                    # Only include TechCrunch articles (not external links)
+                    if 'techcrunch.com' not in url:
+                        continue
+                    
+                    title = link_elem.get_text(strip=True)
+                    if not title or len(title) < 10:  # Skip very short titles
+                        continue
+                    
+                    # Try to find summary in nearby paragraph
+                    summary = None
+                    parent = heading.parent
+                    if parent:
+                        summary_elem = parent.find('p')
+                        if summary_elem:
+                            summary = summary_elem.get_text(strip=True)
                     
                     article = TrendingArticle(
                         title=title,
