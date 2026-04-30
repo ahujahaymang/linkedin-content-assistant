@@ -947,6 +947,12 @@ async def async_main(args: argparse.Namespace) -> int:
                             logger.error(f"Regeneration failed: {e}", exc_info=True)
                             await telegram_bot.send_alert(f"⚠️ Regeneration failed: {str(e)}")
                 
+                # Clear any old pending messages before starting to listen
+                # This prevents processing stale /posted commands from previous sessions
+                cleared = await telegram_bot.clear_pending_updates()
+                if cleared > 0:
+                    logger.info(f"Cleared {cleared} old Telegram message(s) - waiting for new commands only")
+                
                 # Start polling (exit after processing /posted or /skip)
                 await telegram_bot.start_polling(handle_feedback, exit_on_action=True)
                 
