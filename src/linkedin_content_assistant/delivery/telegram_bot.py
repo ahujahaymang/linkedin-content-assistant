@@ -118,6 +118,34 @@ class TelegramBot:
         self._connected = False
         self.logger.info("Disconnected from Telegram Bot API")
     
+    async def clear_pending_updates(self) -> int:
+        """
+        Clear all pending updates from Telegram to avoid processing old messages.
+        Call this before starting to listen so stale commands are ignored.
+        
+        Returns:
+            Number of updates cleared
+        """
+        if not self.is_connected:
+            return 0
+        
+        try:
+            # Fetch all pending updates
+            updates = await self._get_updates()
+            count = len(updates)
+            
+            if count > 0:
+                # Advance offset past all of them
+                last_update_id = max(u.get("update_id", 0) for u in updates)
+                self._update_offset = last_update_id + 1
+                self.logger.info(f"Cleared {count} pending Telegram update(s)")
+            
+            return count
+            
+        except Exception as e:
+            self.logger.error(f"Error clearing pending updates: {e}")
+            return 0
+    
     async def send_post_draft(
         self,
         post: LinkedInPost,
