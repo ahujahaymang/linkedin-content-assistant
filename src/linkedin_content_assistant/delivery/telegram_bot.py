@@ -195,10 +195,11 @@ class TelegramBot:
             # Format the metadata message (separate)
             metadata_message = self._format_metadata(modified_post, profile_id)
             
-            # Send post content first
+            # Send post content first (plain text - no HTML parsing to avoid issues with < > in content)
             success1 = await self._send_message_with_retry(
                 self.config.chat_id,
-                post_message
+                post_message,
+                parse_mode=None
             )
             
             if not success1:
@@ -389,7 +390,8 @@ class TelegramBot:
     async def _send_message_with_retry(
         self,
         chat_id: str,
-        text: str
+        text: str,
+        parse_mode: Optional[str] = None
     ) -> bool:
         """
         Send message with exponential backoff retry.
@@ -397,17 +399,24 @@ class TelegramBot:
         Args:
             chat_id: Chat ID to send to
             text: Message text
+            parse_mode: Optional parse mode override (None = plain text, "HTML" = HTML)
             
         Returns:
             True if message sent successfully
         """
         url = f"https://api.telegram.org/bot{self.config.bot_token}/sendMessage"
         
+        # Use provided parse_mode, or fall back to config default
+        effective_parse_mode = parse_mode if parse_mode is not None else self.config.parse_mode
+        
         message_data = {
             "chat_id": chat_id,
             "text": self._truncate_for_telegram(text),
-            "parse_mode": self.config.parse_mode
         }
+        
+        # Only add parse_mode if it's set (omitting it means plain text)
+        if effective_parse_mode:
+            message_data["parse_mode"] = effective_parse_mode
         
         for attempt in range(self.config.retry_attempts):
             try:
