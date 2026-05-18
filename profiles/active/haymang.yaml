@@ -4,27 +4,27 @@
 
 profile_id: "haymang"
 name: "Haymang Ahuja - AWS Engineer"
-description: "Senior SDE at AWS sharing insights on data engineering, software development, and career growth"
+description: "Senior SDE at AWS sharing insights on software engineering, system design, and career transitions from data engineering to software development"
 version: 1
 enabled: true
 created_at: "2026-04-08T13:52:00"
-last_updated: "2026-04-08T13:52:00"
+last_updated: "2026-05-05T00:00:00"
 
 identity:
-  headline: "Senior Software Development Engineer at Amazon Web Services (AWS) | Data Engineering | Software Architecture"
+  headline: "Senior Software Development Engineer at Amazon Web Services (AWS) | Backend Systems | GenAI | Career Transitions"
   
   seniority: "senior"
   
   primary_domains:
-    - "Data Engineering"
-    - "Software Development"
+    - "Software Engineering"
+    - "Backend Systems & APIs"
     - "AWS & Cloud Computing"
-    - "Big Data & Analytics"
-    - "Career Development"
+    - "Career Transitions (Data Engineering → Software Engineering)"
+    - "System Design & Architecture"
   
-  target_audience: "Data engineers, software developers, and tech professionals navigating career transitions and scaling challenges"
+  target_audience: "Software engineers, data engineers transitioning to SDE roles, and tech professionals at mid-to-senior level navigating career growth"
   
-  positioning: "Sharing real lessons from transitioning from data engineering to software development at scale, with focus on practical insights over theory"
+  positioning: "Senior SDE at AWS who transitioned from data engineering — sharing real, hard-won lessons about software systems, engineering culture, and what it actually takes to grow from DE to SDE at scale"
   
   excluded_topics:
     - "Politics"
@@ -34,22 +34,22 @@ identity:
 
 behavior:
   active_topics:
-    - "Data engineering at scale"
-    - "Software development practices"
-    - "AWS architecture and services"
-    - "Career transitions in tech"
-    - "Engineering constraints and trade-offs"
-    - "System reliability and optimization"
-    - "Big data technologies (Spark, Hadoop, Hive)"
-    - "Engineering culture at Amazon"
+    - "Software engineering practices and patterns"
+    - "Backend system design and architecture"
+    - "AWS services and cloud architecture"
+    - "Career transition from data engineering to software engineering"
+    - "Engineering culture and practices at Amazon"
+    - "Production systems: reliability, observability, failure modes"
+    - "GenAI and LLM applications in production"
+    - "Technical decision-making and trade-offs"
     - "Learning from production incidents"
-    - "Technical decision-making"
+    - "What data engineers need to know to become software engineers"
   
   hook_patterns:
     - "Personal career story"
     - "Lesson learned from failure"
     - "Contrarian technical take"
-    - "Before/after comparison"
+    - "Before/after comparison (DE vs SDE mindset)"
     - "Common misconception to avoid"
     - "What surprised me at Amazon"
     - "When constraints change everything"
