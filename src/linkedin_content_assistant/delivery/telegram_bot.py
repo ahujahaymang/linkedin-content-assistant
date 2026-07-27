@@ -170,24 +170,11 @@ class TelegramBot:
             raise RuntimeError("Telegram bot not connected")
         
         try:
-            # Add article reference note to post content if trending article exists
-            post_content = post.content
-            if trending_article:
-                # trending_article is now a TrendingArticle object, not a dict
-                if not post_content.endswith("comments"):
-                    # Add natural text about article link
-                    post_content += "\n\n📎 Related article link in comments"
-            
-            # Create a modified post with the updated content
-            modified_post = LinkedInPost(
-                content=post_content,
-                hashtags=post.hashtags,
-                call_to_action=post.call_to_action,
-                estimated_length=len(post_content),
-                tone_analysis=post.tone_analysis,
-                formatting_notes=post.formatting_notes,
-                article_reference=post.article_reference
-            )
+            # The article call-to-action (e.g. "...the link is in the comments")
+            # is written into the post body by the drafting agent as a single,
+            # post-specific line. We deliberately do NOT append another one here
+            # — doing so produced duplicate "link in comments" lines.
+            modified_post = post
             
             # Format the post content message (copyable)
             post_message = self._format_post_content(modified_post)

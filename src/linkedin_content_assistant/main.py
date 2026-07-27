@@ -27,6 +27,8 @@ from .llm.config import LLMConfig, ProviderConfig
 from .llm.base import LLMProvider
 from .agents.content_strategy import ContentStrategyAgent
 from .agents.drafting import DraftingAgent
+from .agents.quality import QualityCritiqueAgent
+from .profiles.evaluator import ProfileEvaluator
 from .orchestration.orchestrator import ContentOrchestrator
 
 
@@ -142,6 +144,8 @@ async def initialize_components(config: AppConfig) -> tuple:
         logger.info("Initializing Content Agents...")
         content_strategy_agent = ContentStrategyAgent(llm_factory)
         drafting_agent = DraftingAgent(llm_factory)
+        quality_agent = QualityCritiqueAgent(llm_factory)
+        profile_evaluator = ProfileEvaluator(llm_factory=llm_factory)
         logger.info("Content Agents initialized")
         logger.info("=" * 80)
         logger.info("ABOUT TO INITIALIZE TELEGRAM BOT - THIS LOG SHOULD APPEAR")
@@ -176,6 +180,8 @@ async def initialize_components(config: AppConfig) -> tuple:
             profile_store=profile_store,
             content_strategy_agent=content_strategy_agent,
             drafting_agent=drafting_agent,
+            quality_agent=quality_agent,
+            profile_evaluator=profile_evaluator,
             trend_monitor=None,  # Stub for MVP
             telegram_bot=telegram_bot
         )
@@ -736,6 +742,58 @@ async def async_main(args: argparse.Namespace) -> int:
             
             return 0
         
+        elif args.command == "evaluate-profile":
+            # Evaluate the profile against its content to produce a strategy brief
+            if not args.profile:
+                logger.error("--profile is required for evaluate-profile command")
+                return 1
+
+            profile = profile_manager.load_profile(args.profile)
+            if not profile:
+                logger.error(f"Profile '{args.profile}' not found")
+                return 1
+
+            refresh = getattr(args, 'refresh', False)
+
+            logger.info("=" * 80)
+            logger.info(f"Evaluating Profile Strategy: {args.profile}")
+            logger.info("=" * 80)
+
+            from linkedin_content_assistant.profiles.evaluator import ProfileEvaluator
+            evaluator = ProfileEvaluator(llm_factory=llm_factory)
+            brief = await evaluator.evaluate(profile, profile_store, refresh=refresh)
+
+            logger.info(f"Posts Evaluated: {brief.get('posts_evaluated', 0)} (source: {brief.get('source')})")
+            logger.info(f"Alignment Score: {brief.get('alignment_score', 0)}/100")
+            logger.info(f"\n--- POSITIONING ASSESSMENT ---\n{brief.get('positioning_assessment', 'N/A')}")
+            logger.info(f"\n--- BE KNOWN FOR ---\n{brief.get('refined_positioning', 'N/A')}")
+
+            logger.info("\n--- WHAT RESONATES ---")
+            for item in brief.get('what_resonates', [])[:5]:
+                logger.info(f"  • {item}")
+
+            logger.info("\n--- ALIGNMENT GAPS ---")
+            for item in brief.get('alignment_gaps', [])[:5]:
+                logger.info(f"  • {item}")
+
+            logger.info(f"\n--- AUDIENCE FIT ---\n{brief.get('audience_fit', 'N/A')}")
+
+            logger.info("\n--- CONTENT PILLARS ---")
+            for pillar in brief.get('content_pillars', [])[:5]:
+                logger.info(f"  • {pillar.get('name')}: {pillar.get('why', '')}")
+
+            logger.info("\n--- NEXT DIRECTIONS ---")
+            for item in brief.get('next_directions', [])[:6]:
+                logger.info(f"  • {item}")
+
+            if brief.get('avoid'):
+                logger.info("\n--- AVOID ---")
+                for item in brief.get('avoid', [])[:5]:
+                    logger.info(f"  • {item}")
+
+            logger.info("=" * 80)
+            return 0
+
         elif args.command == "migrate-data":
             # Migrate old data to new profile-specific storage
             old_events_file = Path(config.memory.directory) / "events.json"
@@ -792,8 +850,9 @@ async def async_main(args: argparse.Namespace) -> int:
                 async def handle_feedback(feedback, last_draft):
                     """Handle /posted, /skip, or /regenerate feedback."""
                     if feedback.action == "posted":
-                        # Pop the oldest draft from the queue
-                        draft = profile_store.pop_pending_draft(args.profile)
+                        # Act on the draft the user is actually looking at (the
+                        # most recently delivered one), not the oldest queued draft.
+                        draft = profile_store.pop_latest_pending_draft(args.profile)
                         
                         if not draft:
                             logger.warning("No pending drafts found")
@@ -817,8 +876,8 @@ async def async_main(args: argparse.Namespace) -> int:
                         )
                     
                     elif feedback.action == "skipped":
-                        # Pop the oldest draft and save to rejected posts
-                        draft = profile_store.pop_pending_draft(args.profile)
+                        # Skip the draft the user is looking at (most recent)
+                        draft = profile_store.pop_latest_pending_draft(args.profile)
                         
                         if draft:
                             reason = feedback.reason or "No reason provided"
@@ -843,8 +902,9 @@ async def async_main(args: argparse.Namespace) -> int:
                             await telegram_bot.send_alert("⚠️ No pending drafts to skip")
                     
                     elif feedback.action == "regenerate":
-                        # Peek at the oldest draft to get the content_idea
-                        draft = profile_store.peek_pending_draft(args.profile)
+                        # Peek at the LATEST draft (the one the user is looking at)
+                        # to reuse its content_idea for regeneration.
+                        draft = profile_store.peek_latest_pending_draft(args.profile)
                         
                         if not draft:
                             logger.warning("No pending drafts to regenerate")
@@ -865,72 +925,19 @@ async def async_main(args: argparse.Namespace) -> int:
                         await telegram_bot.send_alert("🔄 Regenerating post... please wait")
                         
                         try:
-                            # Regenerate the post using the same content_idea
-                            # Load profile and create context
-                            profile = profile_manager.load_profile(args.profile)
-                            if not profile:
-                                await telegram_bot.send_alert("⚠️ Profile not found")
-                                return
-                            
-                            from linkedin_content_assistant.agents.base import ProfileContext
-                            context = ProfileContext(
-                                profile_id=profile.profile_id,
-                                identity=profile.identity.model_dump(),
-                                behavior=profile.behavior.model_dump(),
-                                version=profile.version,
-                                last_updated=profile.last_updated
-                            )
-                            
-                            # Use drafting agent to regenerate
-                            from linkedin_content_assistant.llm.factory import LLMFactory
-                            from linkedin_content_assistant.llm.config import LLMConfig, ProviderConfig
-                            from linkedin_content_assistant.llm.base import LLMProvider
-                            import os
-                            
-                            # Create LLM factory (simplified - reuse from orchestrator would be better)
-                            aws_region = os.getenv('AWS_REGION', 'us-east-1')
-                            primary_provider = ProviderConfig(
-                                provider=LLMProvider.BEDROCK_CLAUDE,
-                                model="us.anthropic.claude-sonnet-4-5-20250929-v1:0",
-                                region=aws_region,
-                                max_tokens=2000,
-                                temperature=0.8,
-                                timeout=60,
-                                retry_attempts=3,
-                                retry_delay=5
-                            )
-                            llm_config = LLMConfig(
-                                primary_provider=primary_provider,
-                                fallback_providers=[],
-                                enable_fallback=False
-                            )
-                            llm_factory = LLMFactory(llm_config)
-                            
-                            from linkedin_content_assistant.agents.drafting import DraftingAgent
-                            drafting_agent = DraftingAgent(llm_factory)
-                            
-                            # Generate new draft with same content_idea
-                            drafting_output = await drafting_agent.execute(
-                                context,
-                                profile_store,
+                            # Reuse the orchestrator's drafting + quality + dedup
+                            # pipeline instead of rebuilding the LLM stack inline.
+                            new_post = await orchestrator.regenerate_post(
+                                args.profile,
                                 content_idea
                             )
                             
-                            # Extract new post
-                            linkedin_post_dict = drafting_output.content.get("linkedin_post", {})
-                            from linkedin_content_assistant.agents.drafting import LinkedInPost
-                            new_post = LinkedInPost(
-                                content=linkedin_post_dict.get('content', ''),
-                                hashtags=linkedin_post_dict.get('hashtags', []),
-                                call_to_action=linkedin_post_dict.get('call_to_action'),
-                                estimated_length=linkedin_post_dict.get('estimated_length', 0),
-                                tone_analysis=linkedin_post_dict.get('tone_analysis', {}),
-                                formatting_notes=linkedin_post_dict.get('formatting_notes', []),
-                                article_reference=linkedin_post_dict.get('article_reference')
-                            )
+                            if not new_post:
+                                await telegram_bot.send_alert("⚠️ Regeneration failed")
+                                return
                             
-                            # Replace the pending draft
-                            profile_store.replace_pending_draft(
+                            # Replace the latest pending draft in place
+                            profile_store.replace_latest_pending_draft(
                                 args.profile,
                                 new_post.content,
                                 new_post.hashtags,
@@ -1030,7 +1037,7 @@ Examples:
     
     parser.add_argument(
         "command",
-        choices=["start", "generate-once", "health-check", "import-history", "profile-stats", "analyze-content", "migrate-data", "listen"],
+        choices=["start", "generate-once", "health-check", "import-history", "profile-stats", "analyze-content", "evaluate-profile", "migrate-data", "listen"],
         help="Command to execute"
     )
     
@@ -1058,7 +1065,7 @@ Examples:
     parser.add_argument(
         "--refresh",
         action="store_true",
-        help="Force refresh of cached analysis (for analyze-content command)"
+        help="Force refresh of cached analysis (for analyze-content / evaluate-profile commands)"
     )
     
     args = parser.parse_args()

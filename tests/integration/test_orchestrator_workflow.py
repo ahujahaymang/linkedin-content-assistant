@@ -11,6 +11,7 @@ from linkedin_content_assistant.orchestration.orchestrator import ContentOrchest
 from linkedin_content_assistant.profiles.manager import ProfileManager
 from linkedin_content_assistant.profiles.models import ProfileConfig, IdentityConfig, BehaviorConfig, PostingWindow
 from linkedin_content_assistant.memory.store import InMemoryStore
+from linkedin_content_assistant.memory.profile_store import ProfileMemoryStore
 from linkedin_content_assistant.agents.content_strategy import ContentStrategyAgent
 from linkedin_content_assistant.agents.drafting import DraftingAgent
 from linkedin_content_assistant.llm.factory import LLMFactory
@@ -78,6 +79,7 @@ def orchestrator(temp_dirs):
     """Create orchestrator with all components."""
     profile_manager = ProfileManager(temp_dirs["profiles"])
     memory_store = InMemoryStore(temp_dirs["memory"])
+    profile_store = ProfileMemoryStore(str(Path(temp_dirs["memory"]).parent))
     
     # Create LLM factory (with mock config)
     llm_config = LLMConfig(
@@ -99,6 +101,7 @@ def orchestrator(temp_dirs):
     return ContentOrchestrator(
         profile_manager=profile_manager,
         memory_store=memory_store,
+        profile_store=profile_store,
         content_strategy_agent=content_strategy_agent,
         drafting_agent=drafting_agent,
         trend_monitor=None,

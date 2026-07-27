@@ -52,6 +52,10 @@ class ProfileMemoryStore:
     def _get_content_intelligence_file(self, profile_id: str) -> Path:
         """Get content intelligence file path for a profile."""
         return self._get_profile_dir(profile_id) / "content_intelligence.json"
+
+    def _get_strategy_brief_file(self, profile_id: str) -> Path:
+        """Get strategy brief file path for a profile."""
+        return self._get_profile_dir(profile_id) / "strategy_brief.json"
     
     def _get_last_draft_file(self, profile_id: str) -> Path:
         """Get last draft file path for a profile."""
@@ -267,6 +271,107 @@ class ProfileMemoryStore:
         logger.info(f"Replaced oldest draft for {profile_id}")
         return True
     
+    def _load_pending_drafts(self, profile_id: str) -> List[Dict[str, Any]]:
+        """Load the raw pending-draft queue for a profile."""
+        drafts_file = self._get_pending_drafts_file(profile_id)
+
+        if not drafts_file.exists():
+            return []
+
+        try:
+            with open(drafts_file, 'r') as f:
+                return json.load(f)
+        except (json.JSONDecodeError, IOError) as e:
+            logger.error(f"Failed to load pending drafts for {profile_id}: {e}")
+            return []
+
+    def _save_pending_drafts(self, profile_id: str, queue: List[Dict[str, Any]]) -> None:
+        """Persist the pending-draft queue for a profile."""
+        drafts_file = self._get_pending_drafts_file(profile_id)
+        with open(drafts_file, 'w') as f:
+            json.dump(queue, f, indent=2)
+
+    def get_pending_drafts(self, profile_id: str) -> List[Dict[str, Any]]:
+        """Get all pending (generated but not yet posted) drafts, newest first.
+
+        Args:
+            profile_id: Profile identifier
+
+        Returns:
+            List of pending draft dictionaries, most recent first
+        """
+        return list(reversed(self._load_pending_drafts(profile_id)))
+
+    def peek_latest_pending_draft(self, profile_id: str) -> Optional[Dict[str, Any]]:
+        """Get the most recently generated pending draft without removing it.
+
+        This matches what the user is actually looking at in Telegram (the last
+        message sent), unlike the FIFO ``peek_pending_draft`` which returns the
+        oldest queued draft.
+
+        Args:
+            profile_id: Profile identifier
+
+        Returns:
+            Draft data or None if queue is empty
+        """
+        queue = self._load_pending_drafts(profile_id)
+        return queue[-1] if queue else None
+
+    def pop_latest_pending_draft(self, profile_id: str) -> Optional[Dict[str, Any]]:
+        """Remove and return the most recently generated pending draft (LIFO).
+
+        Args:
+            profile_id: Profile identifier
+
+        Returns:
+            Draft data or None if queue is empty
+        """
+        queue = self._load_pending_drafts(profile_id)
+        if not queue:
+            return None
+
+        draft = queue.pop()
+        self._save_pending_drafts(profile_id, queue)
+        logger.info(f"Popped latest draft from queue for {profile_id} (remaining: {len(queue)})")
+        return draft
+
+    def replace_latest_pending_draft(
+        self,
+        profile_id: str,
+        new_content: str,
+        new_hashtags: List[str],
+        keep_content_idea: bool = True
+    ) -> bool:
+        """Replace the most recently generated pending draft (for regeneration).
+
+        Args:
+            profile_id: Profile identifier
+            new_content: New post content
+            new_hashtags: New hashtags
+            keep_content_idea: Whether to keep the original content_idea
+
+        Returns:
+            True if replaced successfully, False if no draft to replace
+        """
+        queue = self._load_pending_drafts(profile_id)
+        if not queue:
+            return False
+
+        original_idea = queue[-1].get('content_idea') if keep_content_idea else None
+
+        queue[-1] = {
+            "content": new_content,
+            "hashtags": new_hashtags,
+            "sent_at": datetime.utcnow().isoformat(),
+            "content_idea": original_idea,
+            "regenerated": True
+        }
+
+        self._save_pending_drafts(profile_id, queue)
+        logger.info(f"Replaced latest draft for {profile_id}")
+        return True
+
     def get_pending_draft_count(self, profile_id: str) -> int:
         """Get the number of pending drafts.
         
@@ -382,6 +487,11 @@ class ProfileMemoryStore:
         # Filter by type if specified
         if post_type:
             posts = [p for p in posts if p.get('metadata', {}).get('type') == post_type]
+        
+        # Posts are appended oldest -> newest. Return the MOST RECENT posts first
+        # so callers (e.g. dedup / "topics already covered") see recent and
+        # same-day content instead of stale early posts.
+        posts = list(reversed(posts))
         
         # Apply limit
         if limit:
@@ -589,6 +699,39 @@ class ProfileMemoryStore:
             # Try to regenerate
             return self.analyze_content_intelligence(profile_id)
     
+    # ========== Strategy Brief (Profile Evaluation) ==========
+
+    def store_strategy_brief(self, profile_id: str, brief: Dict[str, Any]) -> None:
+        """Store a profile strategy brief.
+
+        Args:
+            profile_id: Profile identifier
+            brief: Strategy brief dictionary
+        """
+        brief_file = self._get_strategy_brief_file(profile_id)
+        with open(brief_file, 'w') as f:
+            json.dump(brief, f, indent=2)
+        logger.info(f"Stored strategy brief for {profile_id}")
+
+    def get_strategy_brief(self, profile_id: str) -> Optional[Dict[str, Any]]:
+        """Get the cached profile strategy brief, if any.
+
+        Args:
+            profile_id: Profile identifier
+
+        Returns:
+            Strategy brief dictionary or None if not yet generated
+        """
+        brief_file = self._get_strategy_brief_file(profile_id)
+        if not brief_file.exists():
+            return None
+        try:
+            with open(brief_file, 'r') as f:
+                return json.load(f)
+        except (json.JSONDecodeError, IOError) as e:
+            logger.error(f"Failed to load strategy brief for {profile_id}: {e}")
+            return None
+
     # ========== Events (Generated Posts, Feedback) ==========
     
     def store_event(self, profile_id: str, event: Dict[str, Any]) -> None:

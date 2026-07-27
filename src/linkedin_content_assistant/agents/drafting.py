@@ -95,13 +95,21 @@ class DraftingAgent(StatelessAgentMixin, LinkedInAgent):
         super().__init__(AgentType.DRAFTING)
         self.llm_factory = llm_factory
     
-    async def execute(self, context: ProfileContext, memory: Any, content_idea: Dict[str, Any]) -> AgentOutput:
+    async def execute(
+        self,
+        context: ProfileContext,
+        memory: Any,
+        content_idea: Dict[str, Any],
+        delivery_style: Optional[Any] = None,
+    ) -> AgentOutput:
         """Convert content idea into LinkedIn-ready post.
         
         Args:
             context: Profile-specific context and configuration
             memory: Memory store for retrieving relevant history
             content_idea: Content idea to convert into post
+            delivery_style: Optional DeliveryStyle controlling tone/connection.
+                If omitted, one is chosen for variety.
             
         Returns:
             AgentOutput with LinkedIn-ready post and metadata
@@ -109,6 +117,12 @@ class DraftingAgent(StatelessAgentMixin, LinkedInAgent):
         try:
             # Parse content idea
             idea = ContentIdea.from_dict(content_idea)
+            
+            # Choose a delivery style so posts vary (tone + how they connect to
+            # the author). Picked here if the caller didn't supply one.
+            if delivery_style is None:
+                from .delivery_style import select_delivery_style
+                delivery_style = select_delivery_style()
             
             # Get recent posts to avoid repetition
             recent_posts = self._get_recent_posts(memory, context.profile_id)
@@ -129,7 +143,9 @@ class DraftingAgent(StatelessAgentMixin, LinkedInAgent):
             system_prompt = self._build_system_prompt(context, style_analysis, content_intelligence)
             
             # Build user prompt with content idea and constraints
-            user_prompt = self._build_user_prompt(idea, context, recent_posts, historical_posts, rejected_posts)
+            user_prompt = self._build_user_prompt(
+                idea, context, recent_posts, historical_posts, rejected_posts, delivery_style
+            )
             
             # Generate LinkedIn post using LLM
             response = await self.llm_factory.generate_with_system(
@@ -157,7 +173,9 @@ class DraftingAgent(StatelessAgentMixin, LinkedInAgent):
                     "historical_posts_used": len(historical_posts),
                     "rejected_posts_used": len(rejected_posts),
                     "style_analysis_available": style_analysis is not None,
-                    "content_intelligence_available": content_intelligence is not None
+                    "content_intelligence_available": content_intelligence is not None,
+                    "delivery_style": getattr(delivery_style, "signature", None),
+                    "delivery_style_label": delivery_style.describe() if delivery_style else None
                 },
                 requires_approval=True,
                 confidence_score=self._calculate_confidence_score(drafting_output, context)
@@ -249,18 +267,18 @@ class DraftingAgent(StatelessAgentMixin, LinkedInAgent):
         }
     
     def _get_recent_posts(self, memory: Any, profile_id: str) -> List[Dict[str, Any]]:
-        """Get recent posts from memory store."""
+        """Get recently generated (but not yet posted) drafts to avoid repetition.
+
+        These are drafts still sitting in the pending queue - i.e. content that
+        was just generated. Surfacing them to the model prevents regenerating a
+        near-identical version of a post the user is already reviewing.
+        """
         try:
-            if hasattr(memory, 'query_events'):
-                events = memory.query_events(
-                    profile_id=profile_id,
-                    event_type="post",
-                    limit=5
-                )
-                return [event.content for event in events if hasattr(event, 'content')]
-            else:
-                logger.warning("Memory store does not support query_events")
-                return []
+            if hasattr(memory, 'get_pending_drafts'):
+                drafts = memory.get_pending_drafts(profile_id)
+                return drafts[:5]
+            logger.warning("Memory store does not support get_pending_drafts")
+            return []
         except Exception as e:
             logger.warning(f"Failed to retrieve recent posts: {e}")
             return []
@@ -467,10 +485,10 @@ LINKEDIN POST REQUIREMENTS:
 4. Include relevant hashtags (3-5 maximum)
 5. End with a call-to-action or engaging question
 6. ⚠️ CRITICAL: Post content MUST be 800-1300 characters (HARD LIMIT - count carefully!)
-7. Maintain professional tone while being personable
-8. Avoid generic corporate speak
-9. Include personal insights or experiences when appropriate
-10. Ensure content aligns with professional positioning
+7. Show personality and range - the specific mood is set per-post by the delivery style, so witty, warm, or provocative are all fair game while keeping the author credible
+8. Avoid generic corporate speak and buzzwords
+9. Personal stories are one option, not a requirement - use them only when the post's connection mode calls for it
+10. Keep content consistent with the author's expertise and credibility
 
 FORMATTING GUIDELINES (LINKEDIN-FRIENDLY):
 - Use line breaks for readability (double line breaks between sections)
@@ -508,7 +526,7 @@ CRITICAL: The post content must be copy-paste ready for LinkedIn. Do NOT use mar
         
         return prompt
     
-    def _build_user_prompt(self, idea: ContentIdea, context: ProfileContext, recent_posts: List[Dict[str, Any]], historical_posts: List[Dict[str, Any]], rejected_posts: List[Dict[str, Any]] = None) -> str:
+    def _build_user_prompt(self, idea: ContentIdea, context: ProfileContext, recent_posts: List[Dict[str, Any]], historical_posts: List[Dict[str, Any]], rejected_posts: List[Dict[str, Any]] = None, delivery_style: Optional[Any] = None) -> str:
         """Build user prompt with content idea and constraints."""
         prompt = f"""Convert this content idea into a LinkedIn post:
 
@@ -518,6 +536,11 @@ CONTENT IDEA:
 - Target Audience: {idea.target_audience}
 - Content Theme: {idea.content_theme}
 - Expected Engagement: {idea.estimated_engagement}"""
+
+        # Apply the chosen delivery style (varies tone + how the post connects
+        # to the author, so the feed doesn't read like a template).
+        if delivery_style is not None:
+            prompt += f"\n\n{delivery_style.to_prompt_directives()}"
         
         if idea.additional_context:
             prompt += f"\n- Additional Context: {idea.additional_context}"
@@ -528,9 +551,17 @@ CONTENT IDEA:
             prompt += f"\n\nARTICLE REFERENCE:"
             prompt += f"\n- Title: {article_ref.get('title', 'N/A')}"
             prompt += f"\n- URL: {article_ref.get('url', 'N/A')}"
-            prompt += f"\n\nCRITICAL: This post is based on the article above."
-            prompt += f"\n- Add the line 'Link in comments' at the END of the post content (before hashtags)"
-            prompt += f"\n- This tells readers you'll post the article link as a comment"
+            prompt += f"\n\nThis post draws on the article above. End the post body"
+            prompt += f" (immediately BEFORE the hashtags) with exactly ONE short, natural line that:"
+            prompt += f"\n- Points readers to the article link in the comments"
+            prompt += f"\n- Is specific to what the article is about and matches the post's tone"
+            prompt += f"\n  (do NOT use the generic phrase 'Link in comments')"
+            prompt += f"\n- Reads like a real person. Vary it. For example (write your OWN, do not copy):"
+            prompt += f"\n    • 'Came across a sharp piece on this — dropped the link in the comments.'"
+            prompt += f"\n    • 'Found a similar take worth your time; it's in the comments.'"
+            prompt += f"\n    • 'Full article in the comments if you want to go deeper.'"
+            prompt += f"\n- Do NOT paste the URL in the post body — only mention it's in the comments"
+            prompt += f"\n- Include this line only ONCE"
         
         # Add historical posts for BOTH style matching AND content awareness
         if historical_posts:
@@ -599,17 +630,28 @@ CONTENT IDEA:
         
         prompt += f"""
 
+MEMORABLE WRITING (this is the house voice - apply on EVERY post):
+- Use a real-world analogy to make the core idea click and stick. Everyday
+  comparisons (cooking, traffic, sports, repairs, nature) beat abstract jargon.
+- Simple words, big impact. Write so a smart 15-year-old gets it, yet a senior
+  peer respects it. Short sentences. Cut jargon and buzzwords.
+- Land ONE clear idea the reader remembers tomorrow - not five shallow ones.
+- Make the opening earn the second line.
+
 CRITICAL REQUIREMENTS:
-1. MATCH THE WRITING STYLE from the historical examples (tone, length, structure, emoji usage)
+1. Match the author's VOICE and vocabulary (not a fixed tone) - the emotional
+   register for THIS post is set by the delivery style above, so it's fine to
+   differ from past posts in mood.
 2. DO NOT REPEAT topics or angles already covered in historical posts
-3. BUILD ON previous insights - reference or extend ideas if relevant, but with fresh perspective
-4. ADD NEW VALUE - bring a unique angle, recent experience, or fresh insight
-5. Use the provided hook as inspiration for the opening
-6. Develop the angle into a full post with original insights
-7. Target the specified audience appropriately
-8. Ensure content is authentic to the professional profile
-9. Include actionable insights or thought-provoking questions
-10. Make it engaging for {idea.estimated_engagement} type of interaction
+3. ADD NEW VALUE - a unique angle or fresh insight, not a restated cliche
+4. Use the provided hook as inspiration for the opening
+5. Follow the delivery style's connection mode: only tie the post to the
+   author's own work when that mode calls for it. An observational or
+   analogy-led post should stand on the strength of the idea, not a forced
+   "in my experience" reference.
+6. Target the specified audience appropriately
+7. Include an actionable insight or a thought-provoking question
+8. Make it engaging for {idea.estimated_engagement} type of interaction
 
 CHARACTER LIMIT ENFORCEMENT:
 ⚠️ CRITICAL: The post content MUST be between 800-1300 characters (optimal for LinkedIn engagement)

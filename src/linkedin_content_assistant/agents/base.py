@@ -11,6 +11,7 @@ class AgentType(Enum):
     """Types of LinkedIn agents."""
     CONTENT_STRATEGY = "content_strategy"
     DRAFTING = "drafting"
+    QUALITY_CRITIQUE = "quality_critique"
     ENGAGEMENT_MONITOR = "engagement_monitor"
     FEED_SCANNER = "feed_scanner"
     PROFILE_EVOLUTION = "profile_evolution"

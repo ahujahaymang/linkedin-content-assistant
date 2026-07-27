@@ -54,6 +54,8 @@ class ContentOrchestrator:
         profile_store: Any,  # ProfileMemoryStore for historical data
         content_strategy_agent: ContentStrategyAgent,
         drafting_agent: DraftingAgent,
+        quality_agent: Optional[Any] = None,   # QualityCritiqueAgent (optional)
+        profile_evaluator: Optional[Any] = None,  # ProfileEvaluator (optional)
         trend_monitor: Optional[Any] = None,  # Will be implemented in later tasks
         telegram_bot: Optional[Any] = None     # Will be implemented in later tasks
     ):
@@ -65,6 +67,7 @@ class ContentOrchestrator:
             profile_store: Profile-specific memory store for historical posts
             content_strategy_agent: Agent for generating post options
             drafting_agent: Agent for drafting final posts
+            quality_agent: Optional agent that critiques/scores drafts for value
             trend_monitor: Optional trend monitor (stub for MVP)
             telegram_bot: Optional Telegram bot for delivery (stub for MVP)
         """
@@ -73,6 +76,8 @@ class ContentOrchestrator:
         self.profile_store = profile_store
         self.content_strategy_agent = content_strategy_agent
         self.drafting_agent = drafting_agent
+        self.quality_agent = quality_agent
+        self.profile_evaluator = profile_evaluator
         self.trend_monitor = trend_monitor
         self.telegram_bot = telegram_bot
     
@@ -121,11 +126,16 @@ class ContentOrchestrator:
             logger.info(f"Retrieved {len(trending_topics)} trending topics")
             
             # Step 4: Generate 3 post options via ContentStrategy (with trending articles)
+            # Load (and auto-refresh if stale) the profile strategy brief so
+            # option generation is grounded in an up-to-date assessment.
+            strategy_brief = await self._maybe_refresh_strategy_brief(profile)
+
             logger.info("Generating content strategy options...")
             strategy_output = await self.content_strategy_agent.execute(
                 context, 
-                self.memory_store,
-                trending_articles=trending_topics
+                self.profile_store,  # Use profile_store for real posted history
+                trending_articles=trending_topics,
+                strategy_brief=strategy_brief
             )
             
             # Validate strategy output
@@ -160,12 +170,12 @@ class ContentOrchestrator:
             logger.info(f"Selected option with theme: {selected_option.get('content_theme', 'unknown')}")
             logger.info(f"Selected option article_reference: {selected_option.get('article_reference', 'None')}")
             
-            # Step 6: Draft final post via Drafting agent
+            # Step 6: Draft final post (with duplicate + quality guards)
             logger.info("Drafting final post...")
-            drafting_output = await self.drafting_agent.execute(
-                context, 
-                self.profile_store,  # Pass profile_store for historical context
-                selected_option
+            drafting_output = await self._draft_and_refine(
+                context,
+                selected_option,
+                profile_id
             )
             
             # Validate drafting output
@@ -231,6 +241,114 @@ class ContentOrchestrator:
                 timestamp=timestamp
             )
     
+    # Strategy brief is auto-refreshed when older than this many days, or after
+    # this many new posts have been added since it was last generated.
+    BRIEF_MAX_AGE_DAYS = 14
+    BRIEF_REFRESH_AFTER_NEW_POSTS = 5
+
+    async def _maybe_refresh_strategy_brief(self, profile: Any) -> Optional[Dict[str, Any]]:
+        """Return the profile strategy brief, regenerating it if stale.
+
+        The brief is auto-refreshed when it is missing, older than
+        ``BRIEF_MAX_AGE_DAYS``, or when enough new posts have accumulated since
+        it was last generated. This keeps content grounded in a current
+        assessment without any manual step.
+        """
+        profile_id = profile.profile_id
+
+        if not hasattr(self.profile_store, 'get_strategy_brief'):
+            return None
+
+        brief = self.profile_store.get_strategy_brief(profile_id)
+
+        # Without an evaluator we can only use whatever is cached.
+        if not self.profile_evaluator:
+            if brief:
+                logger.info("Loaded cached strategy brief (no evaluator to refresh)")
+            return brief
+
+        reason = self._brief_refresh_reason(brief, profile_id)
+        if not reason:
+            logger.info("Strategy brief is current")
+            return brief
+
+        logger.info(f"Auto-refreshing strategy brief ({reason})")
+        try:
+            return await self.profile_evaluator.evaluate(
+                profile, self.profile_store, refresh=True
+            )
+        except Exception as e:
+            logger.warning(f"Strategy brief refresh failed, using existing: {e}")
+            return brief
+
+    def _brief_refresh_reason(
+        self, brief: Optional[Dict[str, Any]], profile_id: str
+    ) -> Optional[str]:
+        """Return a human-readable reason to refresh the brief, or None."""
+        if not brief:
+            return "no brief yet"
+
+        # New posts since last evaluation
+        try:
+            current_posts = self.profile_store.get_post_count(profile_id)
+            evaluated = int(brief.get("posts_evaluated", 0) or 0)
+            if current_posts - evaluated >= self.BRIEF_REFRESH_AFTER_NEW_POSTS:
+                return f"{current_posts - evaluated} new posts since last evaluation"
+        except Exception:
+            pass
+
+        # Age of the brief
+        generated_at = brief.get("generated_at")
+        if generated_at:
+            try:
+                age = datetime.utcnow() - datetime.fromisoformat(generated_at)
+                if age > timedelta(days=self.BRIEF_MAX_AGE_DAYS):
+                    return f"brief is {age.days} days old"
+            except (ValueError, TypeError):
+                pass
+
+        return None
+
+    async def regenerate_post(
+        self,
+        profile_id: str,
+        content_idea: Dict[str, Any]
+    ) -> Optional[LinkedInPost]:
+        """Regenerate a post from a previously used content idea.
+
+        Reuses the same drafting + quality + duplicate-guard pipeline as fresh
+        generation, so a regenerated post gets the same value/uniqueness checks.
+
+        Args:
+            profile_id: Profile identifier
+            content_idea: The content idea (selected option) to re-draft from
+
+        Returns:
+            A new LinkedInPost, or None if generation failed
+        """
+        profile = self.profile_manager.load_profile(profile_id)
+        if not profile:
+            logger.error(f"Cannot regenerate: profile '{profile_id}' not found")
+            return None
+
+        context = self._create_profile_context(profile)
+
+        drafting_output = await self._draft_and_refine(
+            context,
+            content_idea or {},
+            profile_id
+        )
+        if drafting_output is None:
+            return None
+
+        validation = self.drafting_agent.validate_output(drafting_output)
+        if validation.status == ValidationStatus.INVALID:
+            logger.error(f"Regenerated draft invalid: {', '.join(validation.errors)}")
+            return None
+
+        linkedin_post_dict = drafting_output.content.get("linkedin_post", {})
+        return self._dict_to_linkedin_post(linkedin_post_dict)
+
     async def check_generation_limit(self, profile_id: str) -> bool:
         """Check if generation limit (1 post per day) has been reached.
         
@@ -472,7 +590,9 @@ class ContentOrchestrator:
                     "theme": selected_option.get("content_theme", ""),
                     "tone": post.tone_analysis.get("formality", "professional"),
                     "length": post.estimated_length,
-                    "selected_option": selected_option
+                    "selected_option": selected_option,
+                    "quality_critique": drafting_output.metadata.get("quality_critique"),
+                    "history_similarity": drafting_output.metadata.get("history_similarity")
                 },
                 metrics={
                     **drafting_output.metadata,
@@ -598,6 +718,183 @@ class ContentOrchestrator:
         union = words1.union(words2)
         
         return len(intersection) / len(union) if union else 0.0
+
+    # Jaccard word-overlap above this is treated as a near-duplicate of an
+    # existing post. Distinct topics typically score < 0.3; reworded versions
+    # of the same post score higher.
+    DUPLICATE_THRESHOLD = 0.5
+
+    def _max_similarity_to_history(
+        self,
+        content: str,
+        history_contents: List[str]
+    ) -> tuple:
+        """Return (max_similarity, most_similar_preview) vs a list of post bodies."""
+        max_sim = 0.0
+        preview = ""
+        for prev in history_contents:
+            if not prev:
+                continue
+            sim = self._calculate_similarity(content, prev)
+            if sim > max_sim:
+                max_sim = sim
+                preview = prev
+        return max_sim, preview
+
+    async def _draft_and_refine(
+        self,
+        context: ProfileContext,
+        selected_option: Dict[str, Any],
+        profile_id: str,
+        max_attempts: int = 3
+    ) -> AgentOutput:
+        """Draft a post, then refine it until it is both unique and high-value.
+
+        Two guards run on each draft:
+        1. Duplication - programmatic word-overlap against recent posted content
+           (prompt-based avoidance alone is unreliable).
+        2. Quality - an LLM critique that scores the draft for specificity,
+           authenticity and insight density, rejecting generic "fluff".
+
+        If either guard fails, the concrete feedback is fed back into the
+        drafting agent and the post is re-drafted (bounded by ``max_attempts``).
+        The best attempt seen is returned if no attempt fully passes.
+        """
+        # Recent posted content (newest first) to compare against
+        history_contents: List[str] = []
+        if hasattr(self.profile_store, 'get_historical_posts'):
+            recent = self.profile_store.get_historical_posts(profile_id, limit=15)
+            history_contents = [p.get('content', '') for p in recent if p.get('content')]
+
+        from ..agents.delivery_style import select_delivery_style
+
+        option = dict(selected_option)
+        best_output: Optional[AgentOutput] = None
+        best_rank: tuple = (-1.0,)  # higher is better
+        last_style_signature: Optional[str] = None
+
+        for attempt in range(1, max_attempts + 1):
+            # Vary the delivery style each attempt so retries/regenerations
+            # differ in tone and how they connect to the author.
+            delivery_style = select_delivery_style(avoid_signature=last_style_signature)
+            last_style_signature = delivery_style.signature
+
+            drafting_output = await self.drafting_agent.execute(
+                context,
+                self.profile_store,
+                option,
+                delivery_style=delivery_style
+            )
+
+            linkedin_post = drafting_output.content.get("linkedin_post", {})
+            post_content = linkedin_post.get("content", "")
+            hashtags = linkedin_post.get("hashtags", [])
+
+            # Guard 1: duplication
+            sim, preview = self._max_similarity_to_history(post_content, history_contents)
+            is_duplicate = sim >= self.DUPLICATE_THRESHOLD
+
+            # Guard 2: quality critique
+            critique = await self._critique_draft(context, post_content, hashtags)
+            quality_score = critique.get("overall_score", self._quality_pass_threshold())
+            quality_ok = critique.get("passes", True)
+
+            logger.info(
+                f"Draft attempt {attempt}/{max_attempts} [{delivery_style.describe()}]: "
+                f"similarity={sim:.2f} (dup={is_duplicate}), "
+                f"quality={quality_score:.1f} (ok={quality_ok})"
+            )
+
+            # Attach critique to the output so it can be stored/inspected
+            drafting_output.metadata["quality_critique"] = critique
+            drafting_output.metadata["history_similarity"] = round(sim, 3)
+
+            # Rank attempts so we can keep the best if none fully passes.
+            # Prefer non-duplicates, then higher quality.
+            rank = (0.0 if is_duplicate else 1.0, quality_score)
+            if rank > best_rank:
+                best_rank = rank
+                best_output = drafting_output
+
+            if not is_duplicate and quality_ok:
+                logger.info(f"Draft accepted on attempt {attempt}")
+                return drafting_output
+
+            # Build combined revision feedback for the next attempt
+            option['additional_context'] = self._build_revision_feedback(
+                base_context=selected_option.get('additional_context'),
+                is_duplicate=is_duplicate,
+                duplicate_preview=preview if is_duplicate else "",
+                critique=critique if not quality_ok else None,
+            )
+
+        logger.warning(
+            f"Draft did not fully pass after {max_attempts} attempts "
+            f"(best rank={best_rank}); delivering best available version"
+        )
+        return best_output
+
+    async def _critique_draft(
+        self,
+        context: ProfileContext,
+        post_content: str,
+        hashtags: List[str]
+    ) -> Dict[str, Any]:
+        """Run the quality critique agent, failing open if unavailable."""
+        if not self.quality_agent:
+            return {"overall_score": self._quality_pass_threshold(), "passes": True}
+        try:
+            output = await self.quality_agent.execute(
+                context,
+                self.profile_store,
+                post_content=post_content,
+                hashtags=hashtags,
+            )
+            return output.content
+        except Exception as e:
+            logger.warning(f"Quality critique failed, accepting draft by default: {e}")
+            return {"overall_score": self._quality_pass_threshold(), "passes": True}
+
+    def _quality_pass_threshold(self) -> float:
+        """Threshold above which a draft is considered good enough."""
+        return getattr(self.quality_agent, "PASS_THRESHOLD", 72.0) if self.quality_agent else 0.0
+
+    def _build_revision_feedback(
+        self,
+        base_context: Optional[str],
+        is_duplicate: bool,
+        duplicate_preview: str,
+        critique: Optional[Dict[str, Any]],
+    ) -> str:
+        """Compose an actionable revision note for a re-draft."""
+        parts: List[str] = []
+        if base_context:
+            parts.append(base_context)
+
+        if is_duplicate and duplicate_preview:
+            parts.append(
+                "AVOID DUPLICATION: A previously published post is very similar to "
+                "this draft:\n"
+                f"\"{duplicate_preview[:250]}...\"\n"
+                "Choose a clearly different angle, topic, or example."
+            )
+
+        if critique:
+            guidance = critique.get("revision_guidance", "")
+            issues = critique.get("issues", []) or []
+            note = ["IMPROVE QUALITY: This draft was judged too generic or low-value."]
+            if issues:
+                note.append("Specific problems to fix:")
+                note.extend(f"- {issue}" for issue in issues[:5])
+            if guidance:
+                note.append(f"Editor guidance: {guidance}")
+            note.append(
+                "Rewrite with a concrete first-hand example, a specific number or "
+                "situation, and a non-obvious takeaway. Cut generic advice and buzzwords."
+            )
+            parts.append("\n".join(note))
+
+        return "\n\n".join(parts).strip()
     
     def _dict_to_post_option(self, option_dict: Dict[str, Any]) -> PostOption:
         """Convert dictionary to PostOption dataclass."""

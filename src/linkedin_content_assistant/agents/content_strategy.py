@@ -60,13 +60,20 @@ class ContentStrategyAgent(StatelessAgentMixin, LinkedInAgent):
         super().__init__(AgentType.CONTENT_STRATEGY)
         self.llm_factory = llm_factory
     
-    async def execute(self, context: ProfileContext, memory: Any, trending_articles: List[Dict[str, Any]] = None) -> AgentOutput:
+    async def execute(
+        self,
+        context: ProfileContext,
+        memory: Any,
+        trending_articles: List[Dict[str, Any]] = None,
+        strategy_brief: Optional[Dict[str, Any]] = None,
+    ) -> AgentOutput:
         """Generate 3 post options aligned with profile context.
         
         Args:
             context: Profile-specific context and configuration
             memory: Memory store for retrieving relevant history
             trending_articles: Optional list of ranked trending articles
+            strategy_brief: Optional profile strategy brief to ground options
             
         Returns:
             AgentOutput with 3 post options and metadata
@@ -78,8 +85,10 @@ class ContentStrategyAgent(StatelessAgentMixin, LinkedInAgent):
             # Build system prompt for content strategy
             system_prompt = self._build_system_prompt(context)
             
-            # Build user prompt with context, history, and trends
-            user_prompt = self._build_user_prompt(context, recent_content, trending_articles)
+            # Build user prompt with context, history, trends, and strategy brief
+            user_prompt = self._build_user_prompt(
+                context, recent_content, trending_articles, strategy_brief
+            )
             
             # Generate content strategy using LLM
             response = await self.llm_factory.generate_with_system(
@@ -201,18 +210,15 @@ class ContentStrategyAgent(StatelessAgentMixin, LinkedInAgent):
         }
     
     def _get_recent_content_history(self, memory: Any, profile_id: str) -> List[Dict[str, Any]]:
-        """Get recent content history from memory store."""
+        """Get recent posted content so option generation avoids repeating themes."""
         try:
-            if hasattr(memory, 'query_events'):
-                events = memory.query_events(
-                    profile_id=profile_id,
-                    event_type="post",
-                    limit=10
-                )
-                return [event.content for event in events if hasattr(event, 'content')]
-            else:
-                logger.warning("Memory store does not support query_events")
-                return []
+            # Prefer real posted history (most recent first) from ProfileMemoryStore
+            if hasattr(memory, 'get_historical_posts'):
+                posts = memory.get_historical_posts(profile_id, limit=10)
+                logger.info(f"Retrieved {len(posts)} recent posts for strategy context")
+                return posts
+            logger.warning("Memory store does not support get_historical_posts")
+            return []
         except Exception as e:
             logger.warning(f"Failed to retrieve content history: {e}")
             return []
@@ -296,9 +302,19 @@ EXAMPLE without article reference:
     ]
 }}"""
     
-    def _build_user_prompt(self, context: ProfileContext, recent_content: List[Dict[str, Any]], trending_articles: List[Dict[str, Any]] = None) -> str:
+    def _build_user_prompt(self, context: ProfileContext, recent_content: List[Dict[str, Any]], trending_articles: List[Dict[str, Any]] = None, strategy_brief: Optional[Dict[str, Any]] = None) -> str:
         """Build user prompt with context, recent content history, and trending articles."""
         prompt = "Generate 3 diverse LinkedIn post options for this professional profile."
+
+        # Ground options in the profile strategy brief when available
+        if strategy_brief:
+            try:
+                from ..profiles.evaluator import ProfileEvaluator
+                brief_text = ProfileEvaluator.brief_to_prompt_context(strategy_brief)
+                if brief_text:
+                    prompt += f"\n\n{brief_text}\n"
+            except Exception as e:
+                logger.warning(f"Failed to render strategy brief: {e}")
         
         # Add trending articles if available
         if trending_articles:
